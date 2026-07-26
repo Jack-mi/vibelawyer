@@ -1,0 +1,21 @@
+[project]
+name = "vibelawyer"
+version = "0.1.0"
+description = "通用化刑事案件阅卷 Agent —— 基于 Claude Agent SDK Python 的多智能体阅卷笔录/阅卷目录生成系统"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk>=0.2.101",
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+]
+
+[project.scripts]
+vibelawyer = "vibelawyer.run:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vibelawyer"]

@@ -1,0 +1,8 @@
+.venv/
+.DS_Store
+.cache/
+__pycache__/
+*.pyc
+output/
+data/
+tessdata/
