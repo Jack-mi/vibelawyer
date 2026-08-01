@@ -1,9 +1,10 @@
 """阅卷目录 Excel 生成器.
 
-三个工作表:
-  1. 阅卷目录 —— 卷宗名称/页码/所含文件/文书类型/笔录时间/备注
-  2. 案件信息 —— 结构化基本信息表
-  3. 证据索引 —— 全部记录与其来源引用的追溯总表（落实可回溯约束）
+四个工作表:
+  1. 分卷总览 —— 每卷一行 + P起-止:文件名 索引式提要（对标律师版阅读习惯）
+  2. 阅卷目录 —— 卷宗名称/页码/所含文件/文书类型/笔录时间/备注
+  3. 案件信息 —— 结构化基本信息表（含资金勾稽与流水笔数）
+  4. 证据索引 —— 全部记录与其来源引用的追溯总表（落实可回溯约束）
 """
 from __future__ import annotations
 
@@ -51,9 +52,48 @@ def generate_catalog_xlsx(ws: CaseWorkspace, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
 
-    # ---- Sheet 1: 阅卷目录 ----
-    s1 = wb.active
-    s1.title = "阅卷目录"
+    # ---- Sheet 1: 分卷总览（每卷一行 + P起-止:文件名 索引式提要）----
+    s0 = wb.active
+    s0.title = "分卷总览"
+    s0["A1"] = f"{ws.case_name or '案件'} 分卷总览"
+    s0["A1"].font = _TITLE_FONT
+    s0.merge_cells("A1:D1")
+    ov_headers = ["卷宗", "总页数", "所含文件（P起-止:文件名）", "备注"]
+    s0.append([])
+    s0.append(ov_headers)
+    _style_header(s0, 3, len(ov_headers))
+    # 卷宗集合：已登记页数的卷 + 目录条目中出现的卷（兜底未登记页数的卷）
+    vol_names: list[str] = list(ws.known_volumes())
+    for e in ws.catalog:
+        if e.volume_name and e.volume_name not in vol_names:
+            vol_names.append(e.volume_name)
+    orow = 4
+    if vol_names:
+        for vn in vol_names:
+            pages = ws.volume_pages(vn) if vn in ws.known_volumes() else 0
+            files = [e for e in ws.catalog if e.volume_name == vn]
+            if files:
+                idx_parts = []
+                for e in files:
+                    pr = e.page_range or ""
+                    seg = f"P{pr}: {e.file_name}" if pr else (e.file_name or "—")
+                    if e.doc_type:
+                        seg += f"（{e.doc_type}）"
+                    idx_parts.append(seg)
+                files_text = "；".join(idx_parts)
+            else:
+                files_text = "—"
+            s0.append([vn, pages if pages else "—", files_text, "—"])
+            orow += 1
+    else:
+        s0.append(["（暂无）"] * 4)
+        orow += 1
+    _style_body(s0, 4, len(ov_headers), orow - 1)
+    _set_widths(s0, [16, 10, 60, 16])
+    s0.freeze_panes = "A4"
+
+    # ---- Sheet 2: 阅卷目录 ----
+    s1 = wb.create_sheet("阅卷目录")
     s1["A1"] = f"{ws.case_name or '案件'} 阅卷目录"
     s1["A1"].font = _TITLE_FONT
     s1.merge_cells("A1:F1")
@@ -95,6 +135,14 @@ def generate_catalog_xlsx(ws: CaseWorkspace, out_dir: Path) -> Path:
         ["9. 证人证言笔录数", str(len(ws.witness_statements))],
         ["10. 程序性文书数", str(len(ws.procedural_docs))],
         ["11. 书证数", str(len(ws.documentary_evidence))],
+        ["12. 资金勾稽-报案合计", ws.funds.reported_amount or "—"],
+        ["资金勾稽-合同合计", ws.funds.contract_amount or "—"],
+        ["资金勾稽-指控金额", ws.funds.charged_amount or "—"],
+        ["已返还金额", ws.funds.returned_amount or "—"],
+        ["违法所得", ws.funds.illegal_income or "—"],
+        ["已退赔金额", ws.funds.restitution or "—"],
+        ["资金勾稽说明", ws.funds.note or "—"],
+        ["13. 资金流水笔数", str(sum(len(e.transactions) for e in ws.documentary_evidence))],
         ["起诉书制作机关", ind.issuer or "—"],
         ["起诉书落款日期", ind.issue_date or "—"],
         ["适用法律条文", "；".join(ind.legal_basis) or "—"],

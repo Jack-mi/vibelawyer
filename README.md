@@ -102,13 +102,13 @@
 
 ### 依赖
 - Python ≥ 3.11
-- `claude-agent-sdk`、`pypdfium2`、`python-docx`、`openpyxl`、`Pillow`、`numpy`
+- `claude-agent-sdk`、`pypdfium2`、`python-docx`、`openpyxl`、`Pillow`、`numpy`、`fastmcp`（MCP Server 用）
 - **可选（强烈推荐）**：本地 `docling` venv（`~/.local/share/docling-venv`，含 torch/opencv/rapidocr）—— 启用后扫描件 OCR 质量显著优于 tesseract。无则自动回退 tesseract+chi_sim。
 - **可选**：`tesseract` + `chi_sim.traineddata`（放 `tessdata/`）—— docling 不可用时的回退 OCR。
 - 本机已登录 Claude Code CLI（SDK 以子进程方式调用）
 
 ```bash
-pip install pypdfium2 python-docx openpyxl Pillow numpy claude-agent-sdk
+pip install pypdfium2 python-docx openpyxl Pillow numpy claude-agent-sdk fastmcp
 ```
 
 ### 运行
@@ -147,6 +147,65 @@ python scripts/diag.py
 
 ---
 
+## MCP Server（对外服务化）
+
+`vibelawyer/mcp_server.py` 用 [FastMCP](https://github.com/jlowin/fastmcp) 把阅卷系统封装为带 `case_id` 的对外 MCP Server。工具面：
+
+- **生命周期**：`create_case` / `list_cases` / `get_case_status`
+- **读卷**：`list_volumes` / `get_volume_outline` / `read_pages` / `search_volumes` / `get_page_image`
+- **登记**：`set_case_basic` / `record_party` / `record_indictment` / `add_charged_fact` / `record_statement` / `record_procedural_doc` / `record_documentary_evidence` / `add_transaction` / `add_catalog_entry` / `record_conclusions` / `record_funds_summary`
+- **校验导出**：`validate_citations` / `get_workspace_summary` / `write_outputs` / `download_output`（下发 docx/xlsx）
+- **全流程**：`start_review`（后台线程跑 `run_case`，立即返回）/ `get_review_progress`（轮询 status+step+log 尾部）
+
+读/登记/校验/导出类工具直接复用 `tools.py` 的 `handler`，零逻辑重复。
+
+> v1 并发约束：全流程阅卷 job 运行期间，其他案件的交互式工具调用会被拒绝（进程内活动会话绑定不可串号）；同一案件的查询不受影响。
+
+### 本机 stdio（调试 / Claude Desktop 接入）
+
+```bash
+VIBELAWYER_MCP_TRANSPORT=stdio python -m vibelawyer.mcp_server
+# 或经入口脚本（pip install -e . 后）
+vibelawyer-mcp
+```
+
+### 对外 http 部署
+
+```bash
+VIBELAWYER_MCP_TRANSPORT=http \
+VIBELAWYER_MCP_HOST=0.0.0.0 \
+VIBELAWYER_MCP_PORT=8000 \
+VIBELAWYER_MCP_PATH=/mcp \
+python -m vibelawyer.mcp_server
+# 客户端连 http://host:8000/mcp
+```
+
+### 鉴权（可选）
+
+设置环境变量 `VIBELAWYER_MCP_TOKEN` 即启用 `StaticTokenVerifier`（令牌匹配即放行）：
+
+```bash
+VIBELAWYER_MCP_TOKEN=<secret> VIBELAWYER_MCP_TRANSPORT=http python -m vibelawyer.mcp_server
+```
+
+如需 JWT，替换 `mcp_server.py` 中 `_make_auth()` 为 `JWTVerifier`：
+
+```python
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+mcp = FastMCP("vibelawyer", auth=JWTVerifier(jwks_uri="https://<your-idp>/.well-known/jwks.json"))
+```
+
+### 典型调用流程
+
+1. `create_case(case_dir="./data")` → 拿到 `case_id`。
+2. 交互式逐条登记（`list_volumes` / `read_pages` / `record_*`），或 `start_review(case_id)` 一键跑全流程。
+3. `get_review_progress(case_id)` 轮询至 `status=done`。
+4. `download_output(case_id, fmt="docx"|"xlsx")` 取件。
+
+`create_case` 不预转换 docling，首次 `start_review` 约 4 分钟/54 页（模型加载 + OCR），之后同案复用缓存。
+
+---
+
 ## 约束与边界
 
 - **仅本地**：PDF 解析、OCR、文档生成均在本地完成；禁用联网工具，不上传卷宗到外部服务。
@@ -169,12 +228,15 @@ vibelawyer/
   tools.py           原子化 @tool 工具集
   agents.py          8 个专职子 agent 定义
   orchestrator.py    主编排器：顺序子 agent + 核实 + 校验导出
+  sessions.py        CaseSession 会话注册表（MCP 多案件隔离）
+  mcp_server.py      FastMCP 封装：对外 MCP Server（工具带 case_id）
   run.py             CLI 入口
   generators/
     docx_notes.py    阅卷笔录 Word 生成器
-    xlsx_catalog.py  阅卷目录 Excel 生成器
+    xlsx_catalog.py  阅卷目录 Excel 生成器（4 表：分卷总览/阅卷目录/案件信息/证据索引）
 data/                卷宗 PDF（示例）
 tessdata/            tesseract chi_sim 语言包（回退 OCR）
 output/              生成结果 + .docling_cache/
 scripts/diag.py      诊断脚本
+scripts/smoke_render.py  渲染冒烟（合成 workspace，不调 LLM）
 ```

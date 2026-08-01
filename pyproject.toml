@@ -1,17 +1,21 @@
 [project]
 name = "vibelawyer"
 version = "0.1.0"
-description = "通用化刑事案件阅卷 Agent —— 基于 Claude Agent SDK Python 的多智能体阅卷笔录/阅卷目录生成系统"
+description = "通用化刑事案件阅卷 Agent —— 基于 Claude Agent SDK Python 的多智能体阅卷笔录/阅卷目录生成系统，可经 FastMCP 对外服务"
 requires-python = ">=3.11"
 dependencies = [
     "claude-agent-sdk>=0.2.101",
-    "pymupdf>=1.24",
+    "pypdfium2>=4",
     "python-docx>=1.1",
     "openpyxl>=3.1",
+    "Pillow>=10",
+    "numpy>=1.26",
+    "fastmcp>=3.4.4,<4",
 ]
 
 [project.scripts]
 vibelawyer = "vibelawyer.run:main"
+vibelawyer-mcp = "vibelawyer.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
