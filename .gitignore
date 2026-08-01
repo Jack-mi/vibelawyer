@@ -3,6 +3,9 @@
 .cache/
 __pycache__/
 *.pyc
+dist/
+*.egg-info/
+.omo/
 output/
 data/
 tessdata/

@@ -102,13 +102,14 @@
 
 ### 依赖
 - Python ≥ 3.11
-- `claude-agent-sdk`、`pypdfium2`、`python-docx`、`openpyxl`、`Pillow`、`numpy`、`fastmcp`（MCP Server 用）
-- **可选（强烈推荐）**：本地 `docling` venv（`~/.local/share/docling-venv`，含 torch/opencv/rapidocr）—— 启用后扫描件 OCR 质量显著优于 tesseract。无则自动回退 tesseract+chi_sim。
-- **可选**：`tesseract` + `chi_sim.traineddata`（放 `tessdata/`）—— docling 不可用时的回退 OCR。
-- 本机已登录 Claude Code CLI（SDK 以子进程方式调用）
+- 本机已登录 Claude Code CLI（全流程阅卷经 `claude-agent-sdk` 调本机 CLI）
+- **可选（强烈推荐）**：本地 `docling` venv（`~/.local/share/docling-venv`）—— 扫描件 OCR 质量更好
+- **可选**：`tesseract` + `chi_sim` —— docling 不可用时的回退 OCR
 
 ```bash
-pip install pypdfium2 python-docx openpyxl Pillow numpy claude-agent-sdk fastmcp
+pip install vibelawyer
+# 或开发安装
+pip install -e .
 ```
 
 ### 运行
@@ -147,62 +148,81 @@ python scripts/diag.py
 
 ---
 
-## MCP Server（对外服务化）
+## MCP Server（本地接入 Agent）
 
-`vibelawyer/mcp_server.py` 用 [FastMCP](https://github.com/jlowin/fastmcp) 把阅卷系统封装为带 `case_id` 的对外 MCP Server。工具面：
+`vibelawyer` 以 [FastMCP](https://github.com/jlowin/fastmcp) 提供 **本地 stdio MCP Server**：卷宗只在用户本机处理，由 Cursor / Claude Code / Claude Desktop / OpenCode 等 Agent 接入。
+
+工具面（均带 `case_id`）：
 
 - **生命周期**：`create_case` / `list_cases` / `get_case_status`
 - **读卷**：`list_volumes` / `get_volume_outline` / `read_pages` / `search_volumes` / `get_page_image`
 - **登记**：`set_case_basic` / `record_party` / `record_indictment` / `add_charged_fact` / `record_statement` / `record_procedural_doc` / `record_documentary_evidence` / `add_transaction` / `add_catalog_entry` / `record_conclusions` / `record_funds_summary`
-- **校验导出**：`validate_citations` / `get_workspace_summary` / `write_outputs` / `download_output`（下发 docx/xlsx）
-- **全流程**：`start_review`（后台线程跑 `run_case`，立即返回）/ `get_review_progress`（轮询 status+step+log 尾部）
+- **校验导出**：`validate_citations` / `get_workspace_summary` / `write_outputs` / `download_output`
+- **全流程**：`start_review` / `get_review_progress`
 
-读/登记/校验/导出类工具直接复用 `tools.py` 的 `handler`，零逻辑重复。
+> v1：全流程 job 运行期间拒绝他案交互式调用；同案查询不受影响。卷宗 PDF 不出本机。
 
-> v1 并发约束：全流程阅卷 job 运行期间，其他案件的交互式工具调用会被拒绝（进程内活动会话绑定不可串号）；同一案件的查询不受影响。
-
-### 本机 stdio（调试 / Claude Desktop 接入）
+### 安装到 Agent（推荐）
 
 ```bash
-VIBELAWYER_MCP_TRANSPORT=stdio python -m vibelawyer.mcp_server
-# 或经入口脚本（pip install -e . 后）
-vibelawyer-mcp
+pip install vibelawyer
+# 或无需全局安装：
+uvx --from vibelawyer vibelawyer-mcp
 ```
 
-### 对外 http 部署
+**Cursor**（项目或用户 `mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "vibelawyer": {
+      "command": "uvx",
+      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+    }
+  }
+}
+```
+
+**Claude Code**：
 
 ```bash
-VIBELAWYER_MCP_TRANSPORT=http \
-VIBELAWYER_MCP_HOST=0.0.0.0 \
-VIBELAWYER_MCP_PORT=8000 \
-VIBELAWYER_MCP_PATH=/mcp \
-python -m vibelawyer.mcp_server
-# 客户端连 http://host:8000/mcp
+claude mcp add vibelawyer -- uvx --from vibelawyer vibelawyer-mcp
 ```
 
-### 鉴权（可选）
+**Claude Desktop**（`claude_desktop_config.json`）：
 
-设置环境变量 `VIBELAWYER_MCP_TOKEN` 即启用 `StaticTokenVerifier`（令牌匹配即放行）：
-
-```bash
-VIBELAWYER_MCP_TOKEN=<secret> VIBELAWYER_MCP_TRANSPORT=http python -m vibelawyer.mcp_server
+```json
+{
+  "mcpServers": {
+    "vibelawyer": {
+      "command": "uvx",
+      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+    }
+  }
+}
 ```
 
-如需 JWT，替换 `mcp_server.py` 中 `_make_auth()` 为 `JWTVerifier`：
-
-```python
-from fastmcp.server.auth.providers.jwt import JWTVerifier
-mcp = FastMCP("vibelawyer", auth=JWTVerifier(jwks_uri="https://<your-idp>/.well-known/jwks.json"))
-```
+已 `pip install vibelawyer` 时，也可把 `command` 改成 `vibelawyer-mcp`、`args` 留空。
 
 ### 典型调用流程
 
-1. `create_case(case_dir="./data")` → 拿到 `case_id`。
-2. 交互式逐条登记（`list_volumes` / `read_pages` / `record_*`），或 `start_review(case_id)` 一键跑全流程。
-3. `get_review_progress(case_id)` 轮询至 `status=done`。
-4. `download_output(case_id, fmt="docx"|"xlsx")` 取件。
+1. `create_case(case_dir="/绝对路径/到卷宗目录")` → 拿到 `case_id`
+2. 交互式读卷/登记，或 `start_review(case_id)` 一键全流程
+3. `get_review_progress(case_id)` 轮询至 `status=done`
+4. `download_output(case_id, fmt="docx"|"xlsx")` 取件
 
-`create_case` 不预转换 docling，首次 `start_review` 约 4 分钟/54 页（模型加载 + OCR），之后同案复用缓存。
+首次 `start_review` 若走 docling，约数分钟预转换；之后同案复用缓存。
+
+### 本机调试 / HTTP（可选）
+
+```bash
+# stdio（默认）
+vibelawyer-mcp
+
+# 仅本机/内网 HTTP（卷宗仍在该机磁盘；非公网多租户）
+VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 vibelawyer-mcp
+# 可选鉴权：VIBELAWYER_MCP_TOKEN=<secret>
+```
 
 ---
 

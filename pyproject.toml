@@ -1,8 +1,30 @@
 [project]
 name = "vibelawyer"
 version = "0.1.0"
-description = "通用化刑事案件阅卷 Agent —— 基于 Claude Agent SDK Python 的多智能体阅卷笔录/阅卷目录生成系统，可经 FastMCP 对外服务"
+description = "Local MCP server for Chinese criminal case dossier review — generates Word notes and Excel catalogs on your machine"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Jack-mi" }]
+keywords = [
+    "mcp",
+    "fastmcp",
+    "legal",
+    "criminal-law",
+    "dossier",
+    "case-review",
+    "claude",
+    "agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Legal Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+]
 dependencies = [
     "claude-agent-sdk>=0.2.101",
     "pypdfium2>=4",
@@ -12,6 +34,11 @@ dependencies = [
     "numpy>=1.26",
     "fastmcp>=3.4.4,<4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Jack-mi/vibelawyer"
+Repository = "https://github.com/Jack-mi/vibelawyer"
+Issues = "https://github.com/Jack-mi/vibelawyer/issues"
 
 [project.scripts]
 vibelawyer = "vibelawyer.run:main"
