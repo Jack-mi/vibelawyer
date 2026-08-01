@@ -110,7 +110,7 @@ class ProceduralDoc:
     volume: str = ""
     page_start: int = 0
     page_end: int = 0
-    doc_no: str = ""  # 文号（如 京公朝拘传字[2024]53890号）
+    doc_no: str = ""  # 文号（如 某公拘传字[2024]00001号）
     time: str = ""  # 具体时间
     location: str = ""  # 具体地点
     fact_group: str = ""  # 待证事实分组（默认归入“程序性文书”组）
@@ -142,7 +142,7 @@ class DocumentaryEvidence:
     doc_no: str = ""  # 文书/合同编号（如有）
     time: str = ""  # 形成时间
     source: str = ""  # 来源/制作主体
-    fact_group: str = ""  # 待证事实分组（如“胡莉英投资222万事实”；空则归入“其他书证”）
+    fact_group: str = ""  # 待证事实分组（如“证人甲投资事实”；空则归入“其他书证”）
     content_summary: str = ""
     transactions: list[Transaction] = field(default_factory=list)  # 逐笔资金流水
     source_ref: Citation | None = None

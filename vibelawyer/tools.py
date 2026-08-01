@@ -441,7 +441,7 @@ class ProceduralInput(TypedDict):
     volume: Annotated[str, "卷宗"]
     page_start: Annotated[int, "起始页"]
     page_end: Annotated[int, "结束页"]
-    doc_no: NotRequired[Annotated[str, "文号（如 京公朝拘传字[2024]53890号；程序合法性审查关键，务必提取）"]]
+    doc_no: NotRequired[Annotated[str, "文号（如 某公拘传字[2024]00001号；程序合法性审查关键，务必提取）"]]
     time: NotRequired[Annotated[str, "具体时间"]]
     location: NotRequired[Annotated[str, "具体地点"]]
     fact_group: NotRequired[Annotated[str, "待证事实分组；程序性文书一般留空即可"]]
@@ -480,7 +480,7 @@ class EvidenceInput(TypedDict):
     time: NotRequired[Annotated[str, "形成时间"]]
     source: NotRequired[Annotated[str, "来源/制作主体"]]
     fact_group: NotRequired[Annotated[str, "待证事实分组：该书证证明哪笔事实，"
-                                          "如“胡莉英投资222万事实”；无法对应的留空归入“其他书证”"]]
+                                          "如“证人甲投资事实”；无法对应的留空归入“其他书证”"]]
     content_summary: NotRequired[Annotated[str, "主要内容"]]
 
 

@@ -28,6 +28,6 @@ VIBELAWYER_MCP_TRANSPORT=stdio /opt/homebrew/Caskroom/miniconda/base/bin/python 
 - `permission_mode=bypassPermissions`；禁用 Bash/Read/Edit/Web 等内置工具，信息只经 MCP 工具留痕。
 - **MCP 服务化** `vibelawyer/mcp_server.py`：用 FastMCP 把工具面封装为带 `case_id` 的对外 MCP Server（读卷/登记/校验导出工具复用 `tools.py` 的 handler，零逻辑重复）；`sessions.py` 按 `case_id` 隔离多案件会话。全流程 job 运行期间拒绝他案并发调用（v1 单进程单 job）。
 
-## 示例案件
+## 数据约定
 
-`data/` 下为张小双涉嫌非法吸收公众存款案（4 卷 54 页扫描件，非模板的受贿案——系统通用化）。
+本仓库**不收录**真实卷宗或产出物。运行时把 PDF 放到本地 `data/`（已 gitignore），产物写入 `output/`（已 gitignore）。

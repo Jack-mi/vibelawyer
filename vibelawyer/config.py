@@ -97,7 +97,7 @@ def discover_volumes(case_dir: Path) -> list[VolumeSpec]:
 
 def _pretty_volume_name(stem: str) -> str:
     """把文件名清理成更可读的卷宗名（去掉 (2) 之类后缀）."""
-    name = re.sub(r"\(\d+\)$", "", stem)  # 张小双(2) -> 张小双
+    name = re.sub(r"\(\d+\)$", "", stem)  # 某某案卷(2) -> 某某案卷
     name = re.sub(r"[\s_]+", "", name).strip()
     return name or stem
 

@@ -10,7 +10,7 @@
 
 所有事实与证据引用均标注来源卷宗及页码（如 `见《主卷》P55-76`），并可机器校验，落实“禁止幻觉、结论可回溯”。
 
-> 系统对任意刑事案件通用，不假定具体罪名或当事人；本案以 `data/` 下的卷宗为示例运行。
+> 系统对任意刑事案件通用，不假定具体罪名或当事人。本仓库不收录真实卷宗；运行时将 PDF 放入本地 `data/`（已 gitignore）。
 
 ---
 
@@ -120,7 +120,7 @@ python -m vibelawyer.run
 
 # 指定案件目录与输出目录，并给当事人/罪名提示（可选）
 python -m vibelawyer.run --case-dir ./data --output-dir ./output \
-    --defendant 张小双 --verbose
+    --defendant 某某某 --verbose
 
 # 禁用 docling，仅用 pypdfium2+tesseract
 python -m vibelawyer.run --no-docling
@@ -132,7 +132,7 @@ python -m vibelawyer.run --vision
 python scripts/diag.py
 ```
 
-首次运行若启用 docling，会在项目级 `.cache/docling_cache/` 预转换全部卷宗为按页文本缓存（一次性，约 4 分钟/54 页），之后复用。该缓存是中间产物，不进入 `output/`。
+首次运行若启用 docling，会在项目级 `.cache/docling_cache/` 预转换全部卷宗为按页文本缓存（一次性，耗时随页数增长），之后复用。该缓存是中间产物，不进入 `output/`。
 
 运行结束后（`output/` 仅含以下交付物 + 运行日志）：
 - `output/<案名>_阅卷笔录.docx`
@@ -254,7 +254,7 @@ vibelawyer/
   generators/
     docx_notes.py    阅卷笔录 Word 生成器
     xlsx_catalog.py  阅卷目录 Excel 生成器（4 表：分卷总览/阅卷目录/案件信息/证据索引）
-data/                卷宗 PDF（示例）
+data/                本地卷宗 PDF（gitignore，勿提交）
 tessdata/            tesseract chi_sim 语言包（回退 OCR）
 output/              生成结果 + .docling_cache/
 scripts/diag.py      诊断脚本

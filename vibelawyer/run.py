@@ -2,7 +2,7 @@
 
 示例:
     python -m vibelawyer.run --case-dir ./data --output-dir ./output
-    python -m vibelawyer.run --case-dir ./data --defendant 张小双 --verbose
+    python -m vibelawyer.run --case-dir ./data --defendant 某某某 --verbose
 """
 from __future__ import annotations
 

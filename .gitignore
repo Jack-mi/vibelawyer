@@ -1,6 +1,7 @@
 .venv/
 .DS_Store
 .cache/
+.omo/
 __pycache__/
 *.pyc
 dist/
@@ -9,3 +10,6 @@ dist/
 output/
 data/
 tessdata/
+*.pdf
+*.docx
+*.xlsx
