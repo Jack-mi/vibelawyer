@@ -1,46 +1,41 @@
-"""vibelawyer FastMCP Server —— 把阅卷系统封装为可对外部署的 MCP 服务.
+"""vibelawyer FastMCP Server —— 本地阅卷工具箱（不依赖 Claude Code CLI）.
 
-工具面（均带 case_id，对应 `output/OpenCode会话任务轨迹.md` 任务 #3）:
+工具面（均带 case_id）:
   生命周期: create_case / list_cases / get_case_status
   读卷:     list_volumes / get_volume_outline / read_pages / search_volumes / get_page_image
   登记:     set_case_basic / record_party / record_indictment / add_charged_fact / record_statement
             / record_procedural_doc / record_documentary_evidence / add_transaction
             / add_catalog_entry / record_conclusions / record_funds_summary
   校验导出: validate_citations / get_workspace_summary / write_outputs / download_output
-  全流程:   start_review（后台线程跑 run_case，立即返回）/ get_review_progress
+  工作流:   start_review（下发 playbook，由宿主 Agent 按步执行）/ get_review_progress
 
-实现方式（薄封装）: 读/登记/校验/导出类工具直接复用 tools.py 的 SdkMcpTool.handler，
-bind 会话后 `await tool.handler(args)`，零逻辑重复；仅生命周期与全流程工具为本模块专有。
-并发约束（v1）: 全流程阅卷 job 运行期间，其他案件的交互式工具调用会被拒绝
-（进程内 SDK 工具依赖模块级活动会话绑定，切换会串号）；同一案件的查询不受影响。
+实现方式（薄封装）: 读/登记/校验/导出类工具直接复用 tools.py 的 ToolSpec.handler，
+bind 会话后 `await tool.handler(args)`，零逻辑重复。
 
 启动:
-  stdio（本机调试）: VIBELAWYER_MCP_TRANSPORT=stdio python -m vibelawyer.mcp_server
-  http（对外部署）:  VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 python -m vibelawyer.mcp_server
-  鉴权（可选）:      VIBELAWYER_MCP_TOKEN=<secret> 启用 StaticTokenVerifier
+  stdio（默认）: VIBELAWYER_MCP_TRANSPORT=stdio python -m vibelawyer.mcp_server
+  http:          VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 python -m vibelawyer.mcp_server
+  鉴权（可选）:  VIBELAWYER_MCP_TOKEN=<secret> 启用 StaticTokenVerifier
 """
 from __future__ import annotations
 
-import asyncio
 import os
-import threading
 import typing
-from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.utilities.types import File
 
 from .config import DEFAULT_OUTPUT_DIR, load_case
-from .orchestrator import run_case
+from .playbook import get_playbook
 from .sessions import MANAGER, CaseSession
 from .tools import bind_session, get_tools
 
 # MCP 服务默认开启视觉（get_page_image 可用）；按部署环境可经 env 关闭
 _VISION = os.environ.get("VIBELAWYER_MCP_VISION", "1") != "0"
 
-# 复用 tools.py 的 SDK 工具集；SdkMcpTool = {name, description, input_schema, handler}
-_SDK_TOOLS: dict[str, Any] = {t.name: t for t in get_tools(_VISION)}
+# 复用 tools.py 的 ToolSpec 集
+_TOOLS: dict[str, Any] = {t.name: t for t in get_tools(_VISION)}
 
 
 def _make_auth() -> Any:
@@ -55,22 +50,19 @@ def _make_auth() -> Any:
 mcp = FastMCP(
     "vibelawyer",
     instructions=(
-        "刑事案件阅卷 Agent 服务。先 create_case 登记 case_dir，再按需调用读卷/登记工具，"
-        "或 start_review 一键跑全流程后 get_review_progress 轮询、download_output 取件。"
-        "全流程 job 运行期间不支持他案并发调用。"
+        "刑事案件阅卷 MCP 工具箱（本机处理卷宗，不依赖 Claude Code）。"
+        "流程：create_case → start_review 获取 playbook → 按 steps 调用读卷/登记工具 → "
+        "validate_citations → write_outputs → download_output。"
+        "完整步骤见仓库 skills/vibelawyer-review/SKILL.md。"
+        "LLM 推理由宿主 Agent（Cursor / Kimi / OpenCode / Codex 等）提供。"
     ),
     auth=_make_auth(),
 )
 
 
 def _bind_or_reject(case_id: str) -> CaseSession:
-    """绑定活动会话；若他案 job 正在运行则拒绝（v1 单进程单 job）."""
-    session = MANAGER.get(case_id)  # KeyError → 客户端可见 404 文案
-    running = MANAGER.running_session()
-    if running is not None and running.case_id != case_id and running.job_status == "running":
-        raise RuntimeError(
-            f"他案阅卷 job 正在运行（case_id={running.case_id}），v1 暂不支持并发，请稍后重试"
-        )
+    """绑定活动会话."""
+    session = MANAGER.get(case_id)
     bind_session(session)
     return session
 
@@ -111,7 +103,7 @@ def _schema_hint(typed_dict_cls: Any) -> str:
 
 
 def _register_passthrough(name: str) -> None:
-    tool = _SDK_TOOLS[name]
+    tool = _TOOLS[name]
     desc = tool.description or ""
     full_desc = f"{desc}\n\n参数结构（args 字段）: {_schema_hint(tool.input_schema)}"
 
@@ -136,8 +128,8 @@ for _t in _PASSTHROUGH:
 async def _create_case(case_dir: str, output_dir: str = "",
                        defendant_hint: str = "", charge_hint: str = "",
                        vision_available: bool = True) -> dict:
-    """创建案件会话：发现 case_dir 下卷宗 PDF，登记页数（不预转换 docling，首次 start_review 约 4 分钟/54 页）.
-    返回 case_id 与卷宗清单。"""
+    """创建案件会话：发现 case_dir 下卷宗 PDF，登记页数。返回 case_id 与卷宗清单.
+    随后可 start_review 获取宿主执行 playbook，或直接调用读卷/登记工具。"""
     cfg = load_case(
         case_dir=case_dir,
         output_dir=output_dir or DEFAULT_OUTPUT_DIR,
@@ -152,7 +144,10 @@ async def _create_case(case_dir: str, output_dir: str = "",
         "output_dir": str(cfg.output_dir),
         "volumes": [{"name": v.name, "file": v.path.name, "pages": v.pages} for v in cfg.volumes],
         "volume_count": len(cfg.volumes),
-        "message": "已建会话。可交互式调用读卷/登记工具，或 start_review 一键全流程。",
+        "message": (
+            "已建会话。请调用 start_review 获取标准阅卷 playbook，"
+            "或直接按 skills/vibelawyer-review/SKILL.md 调用读卷/登记工具。"
+        ),
     }
 
 
@@ -173,7 +168,7 @@ async def _list_cases() -> dict:
 
 
 async def _get_case_status(case_id: str) -> dict:
-    """查询案件会话当前状态（含工作区登记计数与 job 状态）."""
+    """查询案件会话当前状态（含工作区登记计数）."""
     session = MANAGER.get(case_id)
     ws = session.workspace
     tx_count = sum(len(e.transactions) for e in ws.documentary_evidence)
@@ -209,66 +204,54 @@ for _fn in (_create_case, _list_cases, _get_case_status):
 
 
 # ==========================================================================
-# 全流程工具（本模块专有）
+# 工作流工具：下发 playbook（宿主 Agent 自行编排，无后台 LLM job）
 # ==========================================================================
 
 async def _start_review(case_id: str, model: str = "", effort: str = "high",
                         max_turns: int = 100) -> dict:
-    """启动全流程阅卷 job（后台线程跑 run_case），立即返回；期间用 get_review_progress 轮询.
-    v1 单进程同时只允许一个 job；job 期间他案交互式调用会被拒绝，同案查询不受影响。
+    """下发标准阅卷 playbook，由宿主 Agent 按 steps 顺序调用 MCP 工具完成阅卷.
+
+    不再启动后台 Claude/LLM job（不依赖 Claude Code CLI）。
+    model / effort / max_turns 由宿主自行决定，本参数仅保留兼容、写入提示。
+    进度请用 get_case_status / get_workspace_summary 查看登记计数。
     """
     session = MANAGER.get(case_id)
-    running = MANAGER.running_session()
-    if running is not None and running.job_status == "running":
-        raise RuntimeError(
-            f"已有阅卷 job 在运行（case_id={running.case_id}），v1 单进程单 job，请待其完成或重启服务"
-        )
-    session.job_status = "running"
-    session.job_step = "启动阅卷流程"
-    session.job_log = []
+    session.job_status = "idle"
+    session.job_step = "host_agent_playbook"
     session.job_result = None
     session.job_error = None
-    session.log(f"[start] case_id={case_id} model={model or 'default'} effort={effort}")
-
-    def _run() -> None:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(
-                run_case(
-                    session.cfg,
-                    model=model or None,
-                    effort=effort,
-                    max_turns=max_turns,
-                    verbose=True,
-                    session=session,
-                    progress=lambda m: session.log(m),
-                )
-            )
-            session.job_status = "done"
-            session.job_result = result
-            session.log("[done] 阅卷流程完成")
-        except Exception as e:  # noqa: BLE001
-            session.job_status = "error"
-            session.job_error = str(e)
-            session.log(f"[error] {e}")
-        finally:
-            loop.close()
-
-    threading.Thread(target=_run, daemon=True, name=f"vibelawyer-{case_id}").start()
-    return {"case_id": case_id, "status": "running",
-            "message": "阅卷 job 已启动；用 get_review_progress 轮询进度。"}
+    session.log(
+        f"[playbook] case_id={case_id} "
+        f"(host agent; model/effort hints ignored by server: {model or '-'} / {effort})"
+    )
+    playbook = get_playbook(case_id=case_id)
+    playbook["status"] = "idle"
+    playbook["host_hints"] = {
+        "model": model or None,
+        "effort": effort,
+        "max_turns": max_turns,
+        "note": "由宿主 Agent 使用自身模型执行；服务端不调用 LLM。",
+    }
+    return playbook
 
 
 async def _get_review_progress(case_id: str) -> dict:
-    """轮询全流程阅卷 job 进度：status/step/log 尾部/结果/错误."""
+    """查询阅卷进度：无后台 job；请结合 get_case_status 的 section_counts 判断宿主执行进度."""
     session = MANAGER.get(case_id)
     return {
         "case_id": case_id,
-        "status": session.job_status,
-        "step": session.job_step,
+        "status": "idle",
+        "mode": "host_agent",
+        "step": session.job_step or "host_agent_playbook",
+        "message": (
+            "本服务不运行后台阅卷 job。请按 start_review 返回的 playbook / "
+            "skills/vibelawyer-review/SKILL.md 逐步调用工具；"
+            "用 get_case_status 查看各部分登记计数。"
+        ),
         "log_tail": session.job_log[-15:],
         "result": session.job_result,
         "error": session.job_error,
+        "playbook": get_playbook(case_id=case_id),
     }
 
 

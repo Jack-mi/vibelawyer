@@ -1,6 +1,7 @@
-"""最小冒烟测试：验证 主agent MCP工具调用 + Task委派子agent + 子agent 工具访问。
+"""[LEGACY] 需 pip install 'vibelawyer[legacy-agent]' + 本机 Claude Code CLI。
 
-低成本（仅几次工具调用），在昂贵的完整阅卷前确认 SDK 装配正确。
+最小冒烟测试：验证 主agent MCP工具调用 + Task委派子agent + 子agent 工具访问。
+默认产品路径请用 scripts/diag.py + vibelawyer-mcp + skills/vibelawyer-review/SKILL.md。
 用法: python scripts/smoke_test.py
 """
 from __future__ import annotations

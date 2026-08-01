@@ -1,37 +1,105 @@
 """命令行入口：vibelawyer / python -m vibelawyer.run
 
-示例:
-    python -m vibelawyer.run --case-dir ./data --output-dir ./output
-    python -m vibelawyer.run --case-dir ./data --defendant 某某某 --verbose
+默认：打印 MCP + Skill 使用指引（不调用 Claude Code）。
+可选：--legacy 在已安装 vibelawyer[legacy-agent] 且本机有 Claude Code CLI 时跑旧全流程。
 """
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 
 from .config import DEFAULT_DATA_DIR, DEFAULT_OUTPUT_DIR, load_case
-from .orchestrator import run_case
+from .playbook import playbook_markdown
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="vibelawyer", description="通用化刑事案件阅卷 Agent")
+    p = argparse.ArgumentParser(
+        prog="vibelawyer",
+        description="刑事案件阅卷：默认走 MCP + 宿主 Agent Skill；可选 --legacy 用 Claude Code",
+    )
     p.add_argument("--case-dir", default=str(DEFAULT_DATA_DIR), help="卷宗所在目录（默认 ./data）")
     p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="输出目录（默认 ./output）")
     p.add_argument("--defendant", default=None, help="可选：当事人姓名提示")
     p.add_argument("--charge", default=None, help="可选：涉嫌罪名提示")
-    p.add_argument("--vision", action="store_true", help="启用视觉识别（get_page_image）；缺省仅用本地 OCR")
-    p.add_argument("--no-docling", action="store_true", help="禁用 docling，仅用 pypdfium2+tesseract OCR")
-    p.add_argument("--model", default=None, help="主 agent 模型（如 opus/sonnet；缺省用 CLI 默认）")
+    p.add_argument("--vision", action="store_true", help="启用视觉识别（get_page_image）")
+    p.add_argument("--no-docling", action="store_true", help="禁用 docling（仅 legacy 有意义）")
+    p.add_argument("--model", default=None, help="legacy：主 agent 模型")
     p.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     p.add_argument("--max-turns", type=int, default=100)
     p.add_argument("--verbose", action="store_true", default=True)
-    p.add_argument("--quiet", action="store_true", help="不打印流式进度")
+    p.add_argument("--quiet", action="store_true", help="legacy：不打印流式进度")
+    p.add_argument(
+        "--legacy",
+        action="store_true",
+        help="使用 Claude Agent SDK + Claude Code CLI 跑全流程（需 pip install 'vibelawyer[legacy-agent]'）",
+    )
+    p.add_argument(
+        "--print-playbook",
+        action="store_true",
+        help="打印宿主 Agent 阅卷 playbook（Markdown）后退出",
+    )
     return p.parse_args(argv)
+
+
+def _print_mcp_guide(cfg_case_dir: str) -> int:
+    print("=" * 60)
+    print("vibelawyer —— 推荐用法：任意 Coding Agent + MCP")
+    print("=" * 60)
+    print("""
+不依赖 Claude Code CLI。请在 Cursor / Kimi / OpenCode / Codex 等中配置：
+
+  {
+    "mcpServers": {
+      "vibelawyer": {
+        "command": "uvx",
+        "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+      }
+    }
+  }
+
+然后让 Agent 阅读并执行：
+  skills/vibelawyer-review/SKILL.md
+
+典型工具流：
+  create_case(case_dir="...") → start_review → 按 playbook 读卷/登记
+  → validate_citations → write_outputs → download_output
+
+本机启动 MCP：
+  vibelawyer-mcp
+  # 或: python -m vibelawyer.mcp_server
+
+查看完整步骤：
+  python -m vibelawyer.run --print-playbook
+
+可选旧路径（需 Claude Code）：
+  pip install 'vibelawyer[legacy-agent]'
+  python -m vibelawyer.run --legacy --case-dir ./data
+""")
+    print(f"示例案件目录: {cfg_case_dir}")
+    print("=" * 60)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.print_playbook:
+        print(playbook_markdown())
+        return 0
+
+    if not args.legacy:
+        return _print_mcp_guide(args.case_dir)
+
+    # ---- legacy: Claude Agent SDK + Claude Code CLI ----
+    try:
+        from .orchestrator import run_case
+    except ImportError as e:
+        print(f"无法加载 legacy 编排: {e}", file=sys.stderr)
+        print("请: pip install 'vibelawyer[legacy-agent]'", file=sys.stderr)
+        return 1
+
+    import asyncio
+
     cfg = load_case(
         case_dir=args.case_dir,
         output_dir=args.output_dir,
@@ -45,15 +113,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  - 《{v.name}》 {v.filename} ({v.pages} 页)")
     print(f"输出目录: {cfg.output_dir}")
     print("-" * 60)
+    print("⚠ legacy 模式：依赖本机 Claude Code CLI。")
 
     verbose = args.verbose and not args.quiet
     if args.no_docling:
-        # 运行期禁用 docling：覆盖 init_tools 默认。通过环境标记传递。
         import os
         os.environ["VIBELAWYER_NO_DOCLING"] = "1"
-    result = asyncio.run(
-        run_case(cfg, model=args.model, effort=args.effort, max_turns=args.max_turns, verbose=verbose)
-    )
+
+    try:
+        result = asyncio.run(
+            run_case(
+                cfg, model=args.model, effort=args.effort,
+                max_turns=args.max_turns, verbose=verbose,
+            )
+        )
+    except ImportError as e:
+        print(str(e), file=sys.stderr)
+        return 1
 
     print("\n" + "=" * 60)
     print("阅卷完成。")

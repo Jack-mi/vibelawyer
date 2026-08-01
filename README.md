@@ -1,240 +1,264 @@
-# vibelawyer —— 通用化刑事案件阅卷 Agent
+# vibelawyer —— 通用化刑事案件阅卷 MCP
 
-基于 [Claude Agent SDK Python](https://github.com/anthropics/claude-agent-sdk-python) 构建的多智能体阅卷系统。
-给定一个存放卷宗 PDF 的目录，由**主编排器**按阅卷工作流顺序运行若干**专职子 agent** 完成阅卷梳理，产出：
+本地 [FastMCP](https://github.com/PrefectHQ/fastmcp) 阅卷工具箱。给定卷宗 PDF 目录，由 **任意 Coding Agent**（Cursor / Kimi Code / OpenCode / Codex / Claude Desktop 等）调用工具，产出：
 
-- **阅卷笔录**（Word `.docx`）—— 含七部分结构 + 案件基本信息表 + 阅卷结论（结构化数据完整渲染，无截断）
-- **阅卷目录**（Excel `.xlsx`）—— 卷宗目录 / 案件信息 / 证据索引追溯总表
+- **阅卷笔录**（Word `.docx`）—— 七部分结构 + 案件基本信息 + 阅卷结论（结构化数据完整渲染，无截断）
+- **阅卷目录**（Excel `.xlsx`）—— 分卷总览 / 阅卷目录 / 案件信息 / 证据索引
 
-最终产出仅为 Word + Excel（无 JSON）；所有结构化数据（含来源引用对象、context、法律条文、结论原文）均完整渲染进 docx，信息不丢失。
+**不依赖 Claude Code CLI。** LLM 推理由宿主 Agent 提供；PDF 解析、OCR、Word/Excel 生成均在本机完成，卷宗不经过本服务上传。
 
-所有事实与证据引用均标注来源卷宗及页码（如 `见《主卷》P55-76`），并可机器校验，落实“禁止幻觉、结论可回溯”。
+事实与证据须标注来源卷宗及页码（如 `见《主卷》P55-76`），并可机器校验，落实「禁止幻觉、结论可回溯」。
 
-> 系统对任意刑事案件通用，不假定具体罪名或当事人。本仓库不收录真实卷宗；运行时将 PDF 放入本地 `data/`（已 gitignore）。
+> 对任意刑事案件通用，不假定具体罪名或当事人。本仓库**不收录**真实卷宗；运行时将 PDF 放入本地 `data/`（已 gitignore），产物写入 `output/`（已 gitignore）。
+
+---
+
+## 两种用法（可穿插）
+
+同一 `case_id` 下，**完整流程**与**零散按需**共用全部工具，工作区状态共享。
+
+| 模式 | 何时用 | 怎么做 |
+|------|--------|--------|
+| **完整阅卷** | 「把这案件按标准流程阅完」 | `create_case` → `start_review` 拿 playbook → 按 Skill 八步顺序调工具 → 校验导出 |
+| **按需调用** | 「只查某页 / 只补一条供述 / 只出 Word」 | `create_case` 后直接调 `read_pages` / `record_*` / `write_outputs` 等 |
+
+可先按 playbook 走完大半，再零散补登；也可先散读若干页，再按 playbook 补齐缺步。服务端**不**强制锁步；顺序约束写在 Skill / playbook 里，由宿主 Agent 遵守。
 
 ---
 
 ## 架构
 
 ```
-┌──────────────── Python 主编排器（vibelawyer/orchestrator.py: run_case）────────────────┐
-│  按阅卷工作流顺序运行各专职子 agent（每个为独立 top-level query() 会话），             │
-│  共享同一进程内 MCP 工具与 CaseWorkspace；每步用 get_workspace_summary 核实实际登记数。 │
-│                                                                                        │
-│  case-indexer → indictment-reader → defendant-statement-extractor                      │
-│                                  → codefendant-statement-extractor                      │
-│                                  → witness-statement-extractor                          │
-│                                  → procedural-extractor                                 │
-│                                  → evidence-extractor                                   │
-│                                  → conclusion-synthesizer                               │
-│  → validate_citations + write_outputs（生成 Word/Excel，完整渲染结构化数据）              │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-        │ 所有 agent 共享进程内 MCP 工具（读卷 + 登记 + 校验 + 导出）+ CaseWorkspace │
-        ▼ 卷宗文本提取（三级回退）：docling(RapidOCR) → pypdfium2 文本层 → tesseract chi_sim
+┌──────── 宿主 Coding Agent（Cursor / Kimi / OpenCode / Codex …）────────┐
+│  读 skills/vibelawyer-review/SKILL.md；完整流程或按需调 MCP 工具        │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                │ stdio / http
+                                ▼
+┌──────── vibelawyer-mcp（FastMCP）─────────────────────────────────────┐
+│  create_case / 读卷 / record_* / validate / write_outputs / download   │
+│  CaseWorkspace（case_id 隔离）+ 本机 PDF/OCR                            │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                ▼
+               docling → pypdfium2 → tesseract chi_sim
+               → 阅卷笔录.docx + 阅卷目录.xlsx
 ```
 
-- **原子工具**（`vibelawyer/tools.py`）：以 `@tool` 定义，经 `create_sdk_mcp_server` 注册为进程内 MCP server，所有子 agent 共享，直接操作同一 `CaseWorkspace`。
-- **子 agent**（`vibelawyer/agents.py`）：`AgentDefinition` 定义，各负责笔录一个部分；主编排器以独立 `query()` 会话顺序运行（共享进程内工具与工作区，OCR 结果缓存复用）。
-- **主编排器**（`vibelawyer/orchestrator.py`）：`run_case` 顺序编排 + 逐步核实 + 校验导出。
-- **卷宗解析**（`vibelawyer/pdf_volume.py` + `docling_cache.py`）：首选 docling（RapidOCR，中文扫描件质量最高），不可用时回退 pypdfium2 文本层 + tesseract chi_sim。
+| 组件 | 作用 |
+|------|------|
+| [`vibelawyer/tools.py`](vibelawyer/tools.py) + [`tool_spec.py`](vibelawyer/tool_spec.py) | 原子工具（本地 `ToolSpec`，无 `claude-agent-sdk`） |
+| [`vibelawyer/mcp_server.py`](vibelawyer/mcp_server.py) | FastMCP 对外暴露；passthrough 复用 handler |
+| [`vibelawyer/playbook.py`](vibelawyer/playbook.py) | 标准步骤与铁律；与 Skill / `start_review` 同源 |
+| [`skills/vibelawyer-review/SKILL.md`](skills/vibelawyer-review/SKILL.md) | 宿主可加载的阅卷 Skill |
+| [`vibelawyer/sessions.py`](vibelawyer/sessions.py) | 多案件 `case_id` 隔离 |
 
-### 工具接口被刻意收窄
+`start_review` **只下发 playbook**，不启动后台 LLM job。
 
-`disallowed_tools` 禁用了文件改写（Edit/Write/Bash）、联网（WebFetch/WebSearch）、自由读盘（Read/Grep/Glob）等内置工具，强制一切信息经 MCP 工具留痕；`permission_mode="bypassPermissions"` 实现端到端无人值守运行。
-
-### 为什么子 agent 用顺序 top-level 会话而非 Task 工具
-
-实测在本环境（SDK CLI 经代理路由）下，`Task` 工具启动的子 agent 收不到 MCP 工具结果（返回空），会导致退化循环。改为由 Python 主编排器把每个子 agent 作为独立 `query()` 会话顺序运行，工具结果稳定可达，且 OCR 结果在进程内缓存、后续 agent 读取同页近乎零成本。
-
----
-
-## 工具目录（原子化）
-
-### 读工具
-| 工具 | 作用 |
-|---|---|
-| `list_volumes` | 列出全部卷宗（名称/文件/页数） |
-| `read_pages` | 读取指定卷宗页码区间文本（自动经 docling/tesseract OCR），每页标注页码 |
-| `search_volumes` | 跨卷关键词检索，返回命中卷/页/片段 |
-| `get_volume_outline` | 逐页概览（字数+首行），快速定位文书边界 |
-| `get_page_image` | 渲染页面为图片返回，用于视觉识别（仅 `--vision` 时启用） |
-
-### 写工具（登记结构化记录，强制带来源引用）
-| 工具 | 对应笔录部分 |
-|---|---|
-| `set_case_basic` | 案件基本信息表 |
-| `record_party` | 一、当事人基本情况（含任职情况） |
-| `record_indictment` / `add_charged_fact` | 二、起诉书/起诉意见书内容 |
-| `record_statement(role=defendant)` | 三、被告人供述和辩解 |
-| `record_statement(role=codefendant)` | 四、同案人员供述和辩解 |
-| `record_statement(role=witness)` | 五、证人证言 |
-| `record_procedural_doc` | 六、程序性文书 |
-| `record_documentary_evidence` | 七、书证 |
-| `add_catalog_entry` | 阅卷目录 |
-| `record_conclusions` | 阅卷结论 |
-
-### 校验与导出工具
-| 工具 | 作用 |
-|---|---|
-| `get_workspace_summary` | 查看各部分登记进度 |
-| `validate_citations` | 校验全部来源引用页码合法性（防幻觉） |
-| `write_outputs` | 生成 Word 阅卷笔录 + Excel 阅卷目录 |
-
-> 每条 `record_*` 写入前即时校验页码是否落在真实卷宗页数区间内；`validate_citations` 在导出前对全量记录复核。
+可选遗留：`pip install 'vibelawyer[legacy-agent]'` + `python -m vibelawyer.run --legacy`（需本机 Claude Code CLI，非默认路径）。
 
 ---
 
-## 阅卷笔录七部分结构
-
-1. 当事人基本情况（职务犯罪含任职情况）
-2. 起诉书、起诉意见书内容
-3. 被告人的供述和辩解（按指控事实分组：笔录时间/办案人员/办案地点/同步录音录像/笔录内容）
-4. 同案人员的供述和辩解
-5. 证人证言
-6. 程序性文书（含具体时间、地点）
-7. 书证（时间/文件名称/卷宗页码/主要内容）
-
-附：阅卷目录、阅卷结论（已查明核心事实 / 证据链条 / 证据矛盾点 / 待核查疑点）。
-
----
-
-## 安装与运行
-
-### 依赖
-- Python ≥ 3.11
-- 本机已登录 Claude Code CLI（全流程阅卷经 `claude-agent-sdk` 调本机 CLI）
-- **可选（强烈推荐）**：本地 `docling` venv（`~/.local/share/docling-venv`）—— 扫描件 OCR 质量更好
-- **可选**：`tesseract` + `chi_sim` —— docling 不可用时的回退 OCR
+## 安装
 
 ```bash
 pip install vibelawyer
-# 或开发安装
+# 开发安装
 pip install -e .
 ```
 
-### 运行
-
-```bash
-# 默认对 ./data 目录下的卷宗阅卷，输出到 ./output（首选 docling，自动回退 tesseract）
-python -m vibelawyer.run
-
-# 指定案件目录与输出目录，并给当事人/罪名提示（可选）
-python -m vibelawyer.run --case-dir ./data --output-dir ./output \
-    --defendant 某某某 --verbose
-
-# 禁用 docling，仅用 pypdfium2+tesseract
-python -m vibelawyer.run --no-docling
-
-# 启用视觉识别（仅当 SDK 运行环境支持图像输入时）
-python -m vibelawyer.run --vision
-
-# 诊断（不调用 LLM，验证 PDF 解析/工具层/生成器）
-python scripts/diag.py
-```
-
-首次运行若启用 docling，会在项目级 `.cache/docling_cache/` 预转换全部卷宗为按页文本缓存（一次性，耗时随页数增长），之后复用。该缓存是中间产物，不进入 `output/`。
-
-运行结束后（`output/` 仅含以下交付物 + 运行日志）：
-- `output/<案名>_阅卷笔录.docx`
-- `output/<案名>_阅卷目录.xlsx`
-
-### 在新案件上运行
-
-1. 新建案件目录，放入卷宗 PDF（文件名即卷宗名，会自动清理 `(2)` 等后缀）。
-2. `python -m vibelawyer.run --case-dir <新案件目录>`。
-3. 系统自动发现卷宗、识别当事人/罪名/金额，按工作流产出笔录与目录。
-
-无需改代码即适用于受贿、贪污、诈骗、职务侵占等各类刑事案件；职务犯罪会自动提取任职情况。
+- Python ≥ 3.11  
+- **无需** Claude Code CLI  
+- 可选（推荐）：本地 docling venv（`~/.local/share/docling-venv`）提升扫描件 OCR  
+- 可选：`tesseract` + `chi_sim` 作为 OCR 回退  
 
 ---
 
-## MCP Server（本地接入 Agent）
-
-<!-- mcp-name: io.github.Jack-mi/vibelawyer -->
-
-`vibelawyer` 以 [FastMCP](https://github.com/jlowin/fastmcp) 提供 **本地 stdio MCP Server**：卷宗只在用户本机处理，由 Cursor / Claude Code / Claude Desktop / OpenCode 等 Agent 接入。
-
-工具面（均带 `case_id`）：
-
-- **生命周期**：`create_case` / `list_cases` / `get_case_status`
-- **读卷**：`list_volumes` / `get_volume_outline` / `read_pages` / `search_volumes` / `get_page_image`
-- **登记**：`set_case_basic` / `record_party` / `record_indictment` / `add_charged_fact` / `record_statement` / `record_procedural_doc` / `record_documentary_evidence` / `add_transaction` / `add_catalog_entry` / `record_conclusions` / `record_funds_summary`
-- **校验导出**：`validate_citations` / `get_workspace_summary` / `write_outputs` / `download_output`
-- **全流程**：`start_review` / `get_review_progress`
-
-> v1：全流程 job 运行期间拒绝他案交互式调用；同案查询不受影响。卷宗 PDF 不出本机。
-
-### 安装到 Agent（推荐）
+## 接入宿主 Agent（推荐）
 
 ```bash
-pip install vibelawyer
-# 或无需全局安装：
 uvx --from vibelawyer vibelawyer-mcp
-```
-
-**Cursor**（项目或用户 `mcp.json`）：
-
-```json
-{
-  "mcpServers": {
-    "vibelawyer": {
-      "command": "uvx",
-      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
-    }
-  }
-}
-```
-
-**Claude Code**：
-
-```bash
-claude mcp add vibelawyer -- uvx --from vibelawyer vibelawyer-mcp
-```
-
-**Claude Desktop**（`claude_desktop_config.json`）：
-
-```json
-{
-  "mcpServers": {
-    "vibelawyer": {
-      "command": "uvx",
-      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
-    }
-  }
-}
-```
-
-已 `pip install vibelawyer` 时，也可把 `command` 改成 `vibelawyer-mcp`、`args` 留空。
-
-### 典型调用流程
-
-1. `create_case(case_dir="/绝对路径/到卷宗目录")` → 拿到 `case_id`
-2. 交互式读卷/登记，或 `start_review(case_id)` 一键全流程
-3. `get_review_progress(case_id)` 轮询至 `status=done`
-4. `download_output(case_id, fmt="docx"|"xlsx")` 取件
-
-首次 `start_review` 若走 docling，约数分钟预转换；之后同案复用缓存。
-
-### 本机调试 / HTTP（可选）
-
-```bash
-# stdio（默认）
+# 已 pip install 时：
 vibelawyer-mcp
+```
 
-# 仅本机/内网 HTTP（卷宗仍在该机磁盘；非公网多租户）
+### Cursor / 通用 `mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "vibelawyer": {
+      "command": "uvx",
+      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+    }
+  }
+}
+```
+
+### Claude Desktop（`claude_desktop_config.json`）
+
+```json
+{
+  "mcpServers": {
+    "vibelawyer": {
+      "command": "uvx",
+      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+    }
+  }
+}
+```
+
+### Kimi Code / OpenCode / Codex
+
+在各自 MCP 配置中填入同一 `command` / `args`。已安装包时可将 `command` 改为 `vibelawyer-mcp`、`args` 留空。
+
+配置完成后，让 Agent 阅读并遵循：
+
+**[`skills/vibelawyer-review/SKILL.md`](skills/vibelawyer-review/SKILL.md)**
+
+（或调用 `start_review` 获取与 Skill 同源的结构化 playbook。）
+
+---
+
+## 典型流程
+
+### A. 完整阅卷
+
+1. `create_case(case_dir="/绝对路径/到卷宗目录")` → `case_id`  
+   （可选 `defendant_hint` / `charge_hint` / `output_dir`）
+2. `start_review(case_id)` → 拿到 steps / 铁律 / 调用约定
+3. 按步：编目录 → 起诉书/当事人 → 被告供述 → 同案 → 证人 → 程序性文书 → 书证/流水 → 结论  
+   每步用 `get_case_status` 或 `get_workspace_summary` **核实登记计数**（勿信口头「已完成」）
+4. `validate_citations` → `write_outputs` → `download_output(fmt="docx"|"xlsx")`
+
+### B. 按需单次调用
+
+```
+create_case(...)
+list_volumes / search_volumes / read_pages / get_volume_outline   # 只读
+record_* / add_*                                                   # 补登记
+write_outputs / download_output                                    # 仅导出
+```
+
+### CLI 辅助
+
+```bash
+python -m vibelawyer.run                # 打印 MCP 接入指引
+python -m vibelawyer.run --print-playbook   # 打印完整 playbook（Markdown）
+
+# 诊断 / 渲染冒烟（不调用 LLM）
+python scripts/diag.py
+python scripts/smoke_render.py
+```
+
+### HTTP（可选）
+
+```bash
 VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 vibelawyer-mcp
 # 可选鉴权：VIBELAWYER_MCP_TOKEN=<secret>
 ```
 
 ---
 
+## 工具一览（约 25 个）
+
+Passthrough 读/写/校验工具签名：`tool_name(case_id, args={...})`。
+
+### 生命周期与工作流
+
+| 工具 | 作用 |
+|------|------|
+| `create_case` | 发现 PDF、建会话，返回 `case_id` |
+| `list_cases` / `get_case_status` | 会话列表与各部分登记计数 |
+| `start_review` | 下发 playbook（宿主执行；无后台 job） |
+| `get_review_progress` | 说明无后台 job，并再次附上 playbook |
+| `download_output` | 取回 `docx` / `xlsx` |
+
+### 读卷
+
+| 工具 | 作用 |
+|------|------|
+| `list_volumes` | 卷宗名 / 文件 / 页数 |
+| `get_volume_outline` | 逐页概览（定位文书边界） |
+| `read_pages` | 页码区间文本（含本地 OCR） |
+| `search_volumes` | 跨卷关键词检索 |
+| `get_page_image` | 渲染页面图像（视觉） |
+
+### 登记（强制带来源卷宗名 + 页码）
+
+| 工具 | 笔录部分 |
+|------|----------|
+| `set_case_basic` | 案件基本信息 |
+| `record_party` | 一、当事人（仅本案被告人） |
+| `record_indictment` / `add_charged_fact` | 二、起诉书 / 指控事实 |
+| `record_statement(role=defendant\|codefendant\|witness)` | 三～五、供述与证言（宜含 `full_text`） |
+| `record_procedural_doc` | 六、程序性文书（含文号） |
+| `record_documentary_evidence` / `add_transaction` | 七、书证与资金流水 |
+| `add_catalog_entry` | 阅卷目录条目 |
+| `record_conclusions` / `record_funds_summary` | 结论与资金勾稽 |
+
+### 校验与导出
+
+| 工具 | 作用 |
+|------|------|
+| `get_workspace_summary` | 各部分登记进度 |
+| `validate_citations` | 校验引用页码合法性 |
+| `write_outputs` | 生成 Word 笔录 + Excel 目录 |
+
+---
+
+## 标准阅卷步骤（playbook）
+
+与 [`playbook.py`](vibelawyer/playbook.py) / Skill 一致：
+
+1. **编制阅卷目录** — `add_catalog_entry`，定位起诉书页  
+2. **起诉书与当事人** — `set_case_basic` / `record_party` / `record_indictment` / `add_charged_fact`  
+3. **被告人供述** — `record_statement(role=defendant)`，含逐字 `full_text`  
+4. **同案人供述** — 无则跳过；有则 `role=codefendant`  
+5. **证人证言** — `role=witness`  
+6. **程序性文书** — `record_procedural_doc`（尽量含文号）  
+7. **书证与流水** — `record_documentary_evidence` + 流水类 `add_transaction`  
+8. **阅卷结论** — `record_conclusions` / `record_funds_summary`（不做正式辩护策略）  
+9. **校验导出** — `validate_citations` → `write_outputs` → `download_output`  
+
+### 铁律（摘要）
+
+1. 只能依据 `read_pages` 实际读到的内容登记，严禁编造  
+2. 每条记录必须带来源卷宗名与页码  
+3. **交付物 = 工具调用**，不是口头报告  
+4. 先 `get_volume_outline` 再精读；用 `search_volumes` 防遗漏  
+5. 每步结束用 `get_workspace_summary` / `get_case_status` 核实计数  
+
+---
+
+## 阅卷笔录结构
+
+1. 当事人基本情况（职务犯罪含任职情况）  
+2. 起诉书、起诉意见书内容  
+3. 被告人的供述和辩解  
+4. 同案人员的供述和辩解  
+5. 证人证言  
+6. 程序性文书  
+7. 书证  
+
+附：阅卷目录、阅卷结论（核心事实 / 证据链条 / 矛盾点 / 待核查疑点）。
+
+---
+
+## 在新案件上使用
+
+1. 新建本地目录，放入卷宗 PDF（文件名即卷宗名；会清理 `(2)` 等后缀）  
+2. 宿主 Agent：`create_case(case_dir="<绝对路径>")`  
+3. 完整流程走 Skill，或按需调工具后 `write_outputs`  
+
+无需改代码即可用于受贿、贪污、诈骗、非法吸收公众存款等；职务犯罪会提取任职情况。
+
+---
+
 ## 约束与边界
 
-- **仅本地**：PDF 解析、OCR、文档生成均在本地完成；禁用联网工具，不上传卷宗到外部服务。
-  （LLM 推理经由本机 Claude Code CLI 调用，属 SDK 固有机制。）
-- **可回溯**：所有事实/证据必须标注来源卷宗名与页码；`validate_citations` 校验页码合法性，防幻觉与编造。
-- **扫描件兜底**：文本层缺失时，`get_page_image` 渲染页面供模型视觉识别；若安装 tesseract + `chi_sim` 语言包则自动本地 OCR。
-- **范围限制**：仅做阅卷目录与阅卷笔录的整理及案情梳理，**不生成**正式辩护策略或出庭意见。
+- **仅本地工具面**：解析 / OCR / 生成在本机；不把卷宗上传到 vibelawyer 服务（宿主模型调用由其厂商负责）  
+- **可回溯**：事实须带来源页码；`validate_citations` 防幻觉页码  
+- **范围**：只做阅卷目录与笔录梳理，**不生成**正式辩护策略或出庭意见  
+- **仓库不含案卷**：`data/`、`output/`、`tessdata/` 已 gitignore，勿提交真实卷宗或当事人信息  
 
 ---
 
@@ -242,23 +266,25 @@ VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 vibelawyer-mcp
 
 ```
 vibelawyer/
-  config.py          案件配置与卷宗自动发现 + OCR 环境确保
-  workspace.py       CaseWorkspace 结构化状态 + 引用校验
-  pdf_volume.py      PDF 访问层（docling/pypdfium2/tesseract 三级回退 + 检索）
-  docling_cache.py   docling 预转换缓存（调用 full docling venv）
-  docling_runner.py  docling 转换脚本（在 docling venv 中执行）
-  tools.py           原子化 @tool 工具集
-  agents.py          8 个专职子 agent 定义
-  orchestrator.py    主编排器：顺序子 agent + 核实 + 校验导出
-  sessions.py        CaseSession 会话注册表（MCP 多案件隔离）
-  mcp_server.py      FastMCP 封装：对外 MCP Server（工具带 case_id）
-  run.py             CLI 入口
-  generators/
-    docx_notes.py    阅卷笔录 Word 生成器
-    xlsx_catalog.py  阅卷目录 Excel 生成器（4 表：分卷总览/阅卷目录/案件信息/证据索引）
-data/                本地卷宗 PDF（gitignore，勿提交）
-tessdata/            tesseract chi_sim 语言包（回退 OCR）
-output/              生成结果 + .docling_cache/
-scripts/diag.py      诊断脚本
-scripts/smoke_render.py  渲染冒烟（合成 workspace，不调 LLM）
+  tool_spec.py       本地 @tool / ToolSpec
+  tools.py           原子工具 handler
+  playbook.py        宿主步骤与铁律（与 Skill 同源）
+  mcp_server.py      FastMCP Server
+  sessions.py        case_id 会话
+  workspace.py       CaseWorkspace + 引用校验
+  pdf_volume.py      docling / pypdfium2 / tesseract
+  config.py          案件发现与配置
+  orchestrator.py    可选 legacy（Claude Code）
+  agents.py          分步提示别名
+  run.py             CLI 指引 / --print-playbook / --legacy
+  generators/        docx + xlsx
+skills/vibelawyer-review/SKILL.md
+scripts/diag.py
+scripts/smoke_render.py
 ```
+
+---
+
+## License
+
+MIT

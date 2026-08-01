@@ -1,6 +1,7 @@
-"""视觉能力测试：验证 agent 能否‘看懂’ get_page_image 返回的扫描页图像。
+"""[LEGACY] 需 pip install 'vibelawyer[legacy-agent]' + 本机 Claude Code CLI。
 
-只读一页，低成本确认 vision 端到端可用，再决定是否跑完整阅卷。
+视觉能力测试：验证 agent 能否‘看懂’ get_page_image 返回的扫描页图像。
+默认产品路径请用 vibelawyer-mcp（宿主 Agent 视觉由宿主提供）。
 用法: python scripts/vision_test.py
 """
 from __future__ import annotations

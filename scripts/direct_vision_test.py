@@ -1,5 +1,6 @@
-"""直接视觉测试：把图像直接放在 user message 里（而非工具返回），验证子会话是否有视觉能力。
+"""[LEGACY] 需 pip install 'vibelawyer[legacy-agent]' + 本机 Claude Code CLI。
 
+直接视觉测试：把图像直接放在 user message 里（而非工具返回），验证子会话是否有视觉能力。
 若能看懂 → 视觉可用，问题在 MCP 工具结果传图链路；
 若看不懂 → 子会话/代理本身无视觉，需改用本地 OCR。
 """

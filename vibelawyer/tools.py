@@ -1,4 +1,4 @@
-"""原子化工具集（SDK MCP in-process tools）.
+"""原子化工具集（本地 ToolSpec；经 FastMCP 对外暴露）.
 
 设计原则:
   - 读工具：只读卷宗，返回带页码的文本/图像，绝不替 agent 下结论。
@@ -6,7 +6,6 @@
     写入前即时校验页码合法性，落实“禁止幻觉、结论可回溯”。
   - 校验/导出工具：validate_citations 检查所有引用；write_outputs 生成 Word/Excel。
 
-工具通过 create_sdk_mcp_server 注册为进程内 MCP server，主 agent 与各子 agent 共享。
 字段必填性：来源卷宗名/页码等追溯骨架字段 required，其余 NotRequired，便于 agent
 按卷宗实际载明情况灵活登记。
 """
@@ -14,11 +13,10 @@ from __future__ import annotations
 
 from typing import Annotated, NotRequired, TypedDict
 
-from claude_agent_sdk import tool
-
 from .config import CaseConfig
 from .pdf_volume import VolumeStore
 from .sessions import MANAGER, CaseSession
+from .tool_spec import ToolSpec, tool
 from .workspace import (
     CaseWorkspace,
     CatalogEntry,
@@ -708,7 +706,7 @@ _ALL_TOOLS_WITH_VISION = [
 _ALL_TOOLS_NO_VISION = [t for t in _ALL_TOOLS_WITH_VISION if t is not get_page_image]
 
 
-def get_tools(vision_available: bool = False) -> list:
+def get_tools(vision_available: bool = False) -> list[ToolSpec]:
     """返回当前环境应启用的工具集。
 
     vision_available=True 时包含 get_page_image（视觉识别）；

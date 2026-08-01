@@ -13,7 +13,7 @@
 | Name / Package | `vibelawyer` |
 | Display name | VibeLawyer |
 | Short description | Local MCP for Chinese criminal case dossier review (Word notes + Excel catalog). Case PDFs never leave your machine. |
-| Long description | See README. FastMCP stdio server: create_case → read/record tools or start_review → download docx/xlsx. Requires Claude Code CLI locally. |
+| Long description | See README. FastMCP stdio server: create_case → start_review (playbook for host agent) → read/record tools → download docx/xlsx. No Claude Code CLI required. |
 | GitHub URL | `https://github.com/Jack-mi/vibelawyer` |
 | PyPI package | `vibelawyer` |
 | Install command | `uvx --from vibelawyer vibelawyer-mcp` |
