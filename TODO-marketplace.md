@@ -19,7 +19,7 @@
 
 - [ ] 在 [mcp-marketplace.io](https://mcp-marketplace.io) 用 GitHub 登录 Creator 账号
 - [ ] 打开 [/submit](https://mcp-marketplace.io/submit)，按 `LAUNCHGUIDE.md` 填表，定价选 **Free**
-- [ ] `mcp-publisher login github` + `mcp-publisher publish` → [官方 Registry](https://registry.modelcontextprotocol.io)
+- [x] `mcp-publisher login github` + `mcp-publisher publish` → [官方 Registry](https://registry.modelcontextprotocol.io)（`io.github.Jack-mi/vibelawyer` @ 0.1.1）
 - [ ] 等待安全扫描与审核通过；核对 listing 安装命令为 `uvx --from vibelawyer vibelawyer-mcp`
 
 ## 上架后可选
