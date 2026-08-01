@@ -18,6 +18,7 @@ from claude_agent_sdk import tool
 
 from .config import CaseConfig
 from .pdf_volume import VolumeStore
+from .sessions import MANAGER, CaseSession
 from .workspace import (
     CaseWorkspace,
     CatalogEntry,
@@ -25,60 +26,60 @@ from .workspace import (
     Citation,
     Conclusions,
     DocumentaryEvidence,
+    FundsSummary,
     IndictmentInfo,
     PartyInfo,
     ProceduralDoc,
     Statement,
+    Transaction,
     get_workspace,
-    reset_workspace,
+    set_workspace,
 )
 
 # ---------------------------------------------------------------------------
-# 进程级状态
+# 进程级状态：活动会话绑定（本地 CLI 一次一案；MCP 服务按 case_id 切换）
 # ---------------------------------------------------------------------------
 
-_STORE: VolumeStore | None = None
-_CFG: CaseConfig | None = None
+_ACTIVE: CaseSession | None = None
+
+
+def bind_session(session: CaseSession) -> CaseSession:
+    """把工具层切换到指定案件会话（卷宗存储 + 工作区单例）."""
+    global _ACTIVE
+    _ACTIVE = session
+    set_workspace(session.workspace)
+    return session
+
+
+def active_session() -> CaseSession:
+    if _ACTIVE is None:
+        raise RuntimeError("工具未初始化，请先 init_tools(cfg) 或 bind_session()")
+    return _ACTIVE
 
 
 def init_tools(cfg: CaseConfig, *, use_docling: bool = True, verbose: bool = False) -> CaseWorkspace:
-    """初始化工具层：预转换 docling 缓存、建立卷宗存储、重置工作区、登记各卷页数.
+    """初始化工具层：建会话（卷宗存储+工作区+页数登记）、预转换 docling 缓存并绑定为活动会话.
 
     use_docling=True 时，优先用 docling（RapidOCR）预转换全部卷宗为按页文本并缓存；
     docling 不可用时自动回退到 pypdfium2 文本层 + tesseract。
     """
-    global _STORE, _CFG
-    _CFG = cfg
-    import os
-    if os.environ.get("VIBELAWYER_NO_DOCLING"):
-        use_docling = False
-    docling_dir = None
-    if use_docling:
+    session = MANAGER.create(cfg, use_docling=use_docling, verbose=verbose)
+    if session.docling_dir is not None:
         from . import docling_cache
-        if docling_cache.docling_available():
-            docling_dir = docling_cache.cache_dir_for(cfg.output_dir)
-            # 仅在无缓存时构建（避免重复转换）
-            have = all(docling_cache.get_cached_page_count(v.name, docling_dir) is not None
-                       for v in cfg.volumes) if cfg.volumes else False
-            if not have:
-                print("[init] 预转换 docling 缓存（首次较慢，模型加载+OCR）...", flush=True)
-                docling_cache.build_docling_cache(cfg.volumes, docling_dir, verbose=verbose)
-            else:
-                print("[init] docling 缓存已存在，复用", flush=True)
+        have = all(docling_cache.get_cached_page_count(v.name, session.docling_dir) is not None
+                   for v in cfg.volumes) if cfg.volumes else False
+        if not have:
+            print("[init] 预转换 docling 缓存（首次较慢，模型加载+OCR）...", flush=True)
+            docling_cache.build_docling_cache(cfg.volumes, session.docling_dir, verbose=verbose)
         else:
-            print("[init] docling 不可用，回退 tesseract OCR", flush=True)
-    _STORE = VolumeStore(cfg, docling_cache_dir=docling_dir)
-    ws = reset_workspace()
-    for v in cfg.volumes:
-        ws.register_volume(v.name, _STORE.page_count(v.name))
-    ws.volume_count = len(cfg.volumes)
-    return ws
+            print("[init] docling 缓存已存在，复用", flush=True)
+    elif use_docling:
+        print("[init] docling 不可用，回退 tesseract OCR", flush=True)
+    return bind_session(session).workspace
 
 
 def _store() -> VolumeStore:
-    if _STORE is None:
-        raise RuntimeError("工具未初始化，请先 init_tools(cfg)")
-    return _STORE
+    return active_session().store
 
 
 def _ok(text: str) -> dict:
@@ -326,6 +327,8 @@ class IndictmentInput(TypedDict):
     issuer: NotRequired[Annotated[str, "制作机关"]]
     issue_date: NotRequired[Annotated[str, "落款日期"]]
     legal_basis: NotRequired[Annotated[str, "适用法律条文，多条分号分隔"]]
+    sentencing_circumstances: NotRequired[Annotated[str, "量刑情节，多条分号分隔"
+                                                       "（如 从犯/认罪认罚/退赃退赔/自首坦白；起诉书“本院认为”部分载明的）"]]
     full_text_summary: NotRequired[Annotated[str, "指控事实全文摘录（原样复制涉及被告人的事实）"]]
 
 
@@ -345,6 +348,7 @@ async def record_indictment(args: dict) -> dict:
         charge=args.get("charge", ""),
         total_amount=args.get("total_amount", ""),
         legal_basis=[s.strip() for s in (args.get("legal_basis") or "").split(";") if s.strip()],
+        sentencing_circumstances=[s.strip() for s in (args.get("sentencing_circumstances") or "").split(";") if s.strip()],
         full_text_summary=args.get("full_text_summary", ""),
         source=c,
     )
@@ -391,12 +395,16 @@ class StatementInput(TypedDict):
     investigators: NotRequired[Annotated[str, "办案人员"]]
     location: NotRequired[Annotated[str, "办案地点"]]
     has_av_recording: NotRequired[Annotated[str, "是否同步录音录像：是/否/未注明"]]
+    occasion: NotRequired[Annotated[str, "笔录场景，如 刑事拘留后/取保候审期间（卷宗载明则填）"]]
     charged_fact_ref: NotRequired[Annotated[str, "对应指控事实，如 第1笔；多笔分号分隔"]]
-    content_summary: NotRequired[Annotated[str, "笔录内容摘要（含关键供述/辩解）"]]
+    content_summary: NotRequired[Annotated[str, "笔录要点摘要（含关键供述/辩解，200字内）"]]
+    full_text: NotRequired[Annotated[str, "逐字问答全文：保持原顺序逐条转录“问：…\\n答：…”，不得概括或删减；"
+                                         "OCR 个别错字可按上下文校正并在备注说明"]]
 
 
 @tool("record_statement", "登记供述/辩解或证言。role=defendant(被告人)/codefendant(同案人)/witness(证人)。"
-     "须提取笔录时间、办案人员、办案地点、是否同步录音录像、笔录内容。",
+     "须提取笔录时间、办案人员、办案地点、是否同步录音录像、笔录内容；"
+     "full_text 必须逐字转录全部问答（辩护引用原话是刚需，仅登记摘要视为未完成）。",
      StatementInput)
 async def record_statement(args: dict) -> dict:
     ws = get_workspace()
@@ -412,8 +420,10 @@ async def record_statement(args: dict) -> dict:
         investigators=args.get("investigators", ""),
         location=args.get("location", ""),
         has_av_recording=args.get("has_av_recording", "未注明"),
+        occasion=args.get("occasion", ""),
         charged_fact_ref=args.get("charged_fact_ref", ""),
         content_summary=args.get("content_summary", ""),
+        full_text=args.get("full_text", ""),
         source=c,
     )
     if role == "codefendant":
@@ -431,12 +441,14 @@ class ProceduralInput(TypedDict):
     volume: Annotated[str, "卷宗"]
     page_start: Annotated[int, "起始页"]
     page_end: Annotated[int, "结束页"]
+    doc_no: NotRequired[Annotated[str, "文号（如 京公朝拘传字[2024]53890号；程序合法性审查关键，务必提取）"]]
     time: NotRequired[Annotated[str, "具体时间"]]
     location: NotRequired[Annotated[str, "具体地点"]]
+    fact_group: NotRequired[Annotated[str, "待证事实分组；程序性文书一般留空即可"]]
     content_summary: NotRequired[Annotated[str, "文书主要内容"]]
 
 
-@tool("record_procedural_doc", "登记程序性文书（第六部分）。包含从被调查至当前的全部程序性文书，需含时间、地点。",
+@tool("record_procedural_doc", "登记程序性文书（第六部分）。包含从被调查至当前的全部程序性文书，需含文号、时间、地点。",
       ProceduralInput)
 async def record_procedural_doc(args: dict) -> dict:
     ws = get_workspace()
@@ -447,8 +459,10 @@ async def record_procedural_doc(args: dict) -> dict:
             volume=args["volume"],
             page_start=int(args.get("page_start") or 0),
             page_end=int(args.get("page_end") or 0),
+            doc_no=args.get("doc_no", ""),
             time=args.get("time", ""),
             location=args.get("location", ""),
+            fact_group=args.get("fact_group", ""),
             content_summary=args.get("content_summary", ""),
             source=c,
         )
@@ -462,12 +476,16 @@ class EvidenceInput(TypedDict):
     volume: Annotated[str, "卷宗"]
     page_start: Annotated[int, "起始页"]
     page_end: Annotated[int, "结束页"]
+    doc_no: NotRequired[Annotated[str, "文书/合同编号（如有）"]]
     time: NotRequired[Annotated[str, "形成时间"]]
     source: NotRequired[Annotated[str, "来源/制作主体"]]
+    fact_group: NotRequired[Annotated[str, "待证事实分组：该书证证明哪笔事实，"
+                                          "如“胡莉英投资222万事实”；无法对应的留空归入“其他书证”"]]
     content_summary: NotRequired[Annotated[str, "主要内容"]]
 
 
-@tool("record_documentary_evidence", "登记书证（第七部分，客观证据）。须列明时间、文件名称、卷宗页码、主要内容。",
+@tool("record_documentary_evidence", "登记书证（第七部分，客观证据）。须列明时间、文件名称、卷宗页码、主要内容，"
+      "并按待证事实分组（fact_group）；含转账/流水内容的书证登记后再用 add_transaction 逐笔登记资金流水。",
       EvidenceInput)
 async def record_documentary_evidence(args: dict) -> dict:
     ws = get_workspace()
@@ -478,14 +496,45 @@ async def record_documentary_evidence(args: dict) -> dict:
             volume=args["volume"],
             page_start=int(args.get("page_start") or 0),
             page_end=int(args.get("page_end") or 0),
+            doc_no=args.get("doc_no", ""),
             time=args.get("time", ""),
             source=args.get("source", ""),
+            fact_group=args.get("fact_group", ""),
             content_summary=args.get("content_summary", ""),
             source_ref=c,
         )
     )
     ok, msg = ws.validate_citation(c)
     return _ok(f"已登记书证:{args['name']} {c.render()}（校验:{msg}）")
+
+
+class TransactionInput(TypedDict):
+    evidence_name: Annotated[str, "所属书证名称（须与 record_documentary_evidence 登记的 name 完全一致）"]
+    date: Annotated[str, "交易日期"]
+    payer: Annotated[str, "付款方"]
+    payee: Annotated[str, "收款方"]
+    amount: Annotated[str, "金额（保留原文表述，如 人民币45万元）"]
+    account: NotRequired[Annotated[str, "收/付款账户信息（开户行+卡号等）"]]
+    note: NotRequired[Annotated[str, "备注（用途/对应合同等）"]]
+    page: NotRequired[Annotated[int, "所在卷宗页码（须落在所属书证页码区间内）"]]
+
+
+@tool("add_transaction", "为已登记的书证逐笔登记资金流水（转账记录/回款/返利/工资提成等）。"
+      "银行流水类书证必须逐笔登记，不得只写汇总——逐笔流水是金额勾稽与辩护核账的基础。",
+      TransactionInput)
+async def add_transaction(args: dict) -> dict:
+    ws = get_workspace()
+    tx = Transaction(
+        date=args.get("date", ""),
+        payer=args.get("payer", ""),
+        payee=args.get("payee", ""),
+        amount=args.get("amount", ""),
+        account=args.get("account", ""),
+        note=args.get("note", ""),
+        page=int(args.get("page") or 0),
+    )
+    ok, msg = ws.attach_transaction(args.get("evidence_name", ""), tx)
+    return _ok(msg) if ok else _err(msg)
 
 
 class CatalogInput(TypedDict):
@@ -538,6 +587,37 @@ async def record_conclusions(args: dict) -> dict:
     return _ok(f"已登记阅卷结论：核心事实{len(ws.conclusions.core_facts)}条 / 矛盾点{len(ws.conclusions.contradictions)}条 / 疑点{len(ws.conclusions.doubts)}条")
 
 
+class FundsInput(TypedDict):
+    reported_amount: NotRequired[Annotated[str, "报案/投资人陈述金额合计"]]
+    contract_amount: NotRequired[Annotated[str, "合同/协议金额合计"]]
+    charged_amount: NotRequired[Annotated[str, "起诉书指控金额"]]
+    returned_amount: NotRequired[Annotated[str, "已返还/返利金额"]]
+    illegal_income: NotRequired[Annotated[str, "违法所得（工资/提成等，须注明计算区间与依据）"]]
+    restitution: NotRequired[Annotated[str, "已退赔金额"]]
+    note: NotRequired[Annotated[str, "勾稽说明：各口径之间的差异与原因（如报案金额与指控金额不一致须说明）"]]
+
+
+@tool("record_funds_summary", "登记资金勾稽摘要（辩护关键数字）：报案合计/合同合计/指控金额/已返还/违法所得/已退赔。"
+      "由结论员在综合全部书证与笔录后计算登记；各口径不一致时必须在 note 中说明差异。",
+      FundsInput)
+async def record_funds_summary(args: dict) -> dict:
+    ws = get_workspace()
+    ws.funds = FundsSummary(
+        reported_amount=args.get("reported_amount", ""),
+        contract_amount=args.get("contract_amount", ""),
+        charged_amount=args.get("charged_amount", ""),
+        returned_amount=args.get("returned_amount", ""),
+        illegal_income=args.get("illegal_income", ""),
+        restitution=args.get("restitution", ""),
+        note=args.get("note", ""),
+    )
+    filled = sum(1 for v in (
+        ws.funds.reported_amount, ws.funds.contract_amount, ws.funds.charged_amount,
+        ws.funds.returned_amount, ws.funds.illegal_income, ws.funds.restitution,
+    ) if v)
+    return _ok(f"已登记资金勾稽摘要（{filled}/6 项有值）")
+
+
 # ===========================================================================
 # 校验与导出工具
 # ===========================================================================
@@ -562,18 +642,24 @@ async def validate_citations(args: dict) -> dict:
 async def get_workspace_summary(args: dict) -> dict:
     ws = get_workspace()
     c = _count_records(ws)
+    tx_count = sum(len(e.transactions) for e in ws.documentary_evidence)
+    funds_filled = sum(1 for v in (
+        ws.funds.reported_amount, ws.funds.contract_amount, ws.funds.charged_amount,
+        ws.funds.returned_amount, ws.funds.illegal_income, ws.funds.restitution,
+    ) if v)
     lines = [
         f"案件:{ws.case_name or '(未登记)'} | 当事人:{ws.defendant or '(未登记)'} | 罪名:{ws.charge or '(未登记)'} | 金额:{ws.total_amount or '(未登记)'} | 卷数:{ws.volume_count}",
         "各部分登记数：",
         f"  一.当事人基本情况: {1 if ws.party.name else 0}",
         f"  二.起诉书/起诉意见书: {1 if ws.indictment.doc_type else 0}（指控事实 {len(ws.indictment.facts)} 笔）",
-        f"  三.被告人供述: {c['defendant']}",
-        f"  四.同案人供述: {c['codefendant']}",
-        f"  五.证人证言: {c['witness']}",
-        f"  六.程序性文书: {len(ws.procedural_docs)}",
-        f"  七.书证: {len(ws.documentary_evidence)}",
+        f"  三.被告人供述: {c['defendant']}（含逐字全文 {sum(1 for s in ws.defendant_statements if s.full_text)} 份）",
+        f"  四.同案人供述: {c['codefendant']}（含逐字全文 {sum(1 for s in ws.codefendant_statements if s.full_text)} 份）",
+        f"  五.证人证言: {c['witness']}（含逐字全文 {sum(1 for s in ws.witness_statements if s.full_text)} 份）",
+        f"  六.程序性文书: {len(ws.procedural_docs)}（含文号 {sum(1 for d in ws.procedural_docs if d.doc_no)} 份）",
+        f"  七.书证: {len(ws.documentary_evidence)}（资金流水 {tx_count} 笔）",
         f"  阅卷目录条目: {len(ws.catalog)}",
         f"  阅卷结论: 核心{len(ws.conclusions.core_facts)}/矛盾{len(ws.conclusions.contradictions)}/疑点{len(ws.conclusions.doubts)}",
+        f"  资金勾稽: {funds_filled}/6 项",
     ]
     return _ok("\n".join(lines))
 
@@ -585,13 +671,11 @@ class WriteOutputInput(TypedDict):
 @tool("write_outputs", "生成阅卷笔录(Word)与阅卷目录(Excel)（含案件信息表与结论），返回文件路径。",
       WriteOutputInput)
 async def write_outputs(args: dict) -> dict:
-    if _CFG is None:
-        return _err("未初始化案件配置")
     from .generators.docx_notes import generate_review_notes
     from .generators.xlsx_catalog import generate_catalog_xlsx
 
     ws = get_workspace()
-    out_dir = _CFG.ensure_output_dir()
+    out_dir = active_session().cfg.ensure_output_dir()
     fmt = (args.get("fmt") or "all").strip()
     paths = []
     if fmt in ("all", "docx"):
@@ -615,8 +699,8 @@ def _count_records(ws: CaseWorkspace) -> dict:
 _ALL_TOOLS_WITH_VISION = [
     list_volumes, read_pages, search_volumes, get_volume_outline, get_page_image,
     set_case_basic, record_party, record_indictment, add_charged_fact,
-    record_statement, record_procedural_doc, record_documentary_evidence,
-    add_catalog_entry, record_conclusions, validate_citations,
+    record_statement, record_procedural_doc, record_documentary_evidence, add_transaction,
+    add_catalog_entry, record_conclusions, record_funds_summary, validate_citations,
     get_workspace_summary, write_outputs,
 ]
 

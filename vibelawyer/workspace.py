@@ -77,6 +77,7 @@ class IndictmentInfo:
     facts: list[ChargedFact] = field(default_factory=list)
     total_amount: str = ""  # 涉案总金额
     legal_basis: list[str] = field(default_factory=list)  # 适用法律条文
+    sentencing_circumstances: list[str] = field(default_factory=list)  # 量刑情节（从犯/认罪认罚/退赃等）
     full_text_summary: str = ""  # 指控事实全文摘录
     source: Citation | None = None
 
@@ -94,8 +95,10 @@ class Statement:
     investigators: str = ""  # 办案人员
     location: str = ""  # 办案地点
     has_av_recording: str = ""  # 是否同步录音录像（是/否/未注明）
+    occasion: str = ""  # 笔录场景（如 刑事拘留后/取保候审期间/逮捕后）
     charged_fact_ref: str = ""  # 对应指控事实（如“第1笔”）
-    content_summary: str = ""  # 笔录内容摘要
+    content_summary: str = ""  # 笔录内容摘要（要点）
+    full_text: str = ""  # 逐字问答全文（“问：…\n答：…”保持原顺序，不得概括）
     source: Citation | None = None
 
 
@@ -107,24 +110,55 @@ class ProceduralDoc:
     volume: str = ""
     page_start: int = 0
     page_end: int = 0
+    doc_no: str = ""  # 文号（如 京公朝拘传字[2024]53890号）
     time: str = ""  # 具体时间
     location: str = ""  # 具体地点
+    fact_group: str = ""  # 待证事实分组（默认归入“程序性文书”组）
     content_summary: str = ""
     source: Citation | None = None
+
+
+@dataclass
+class Transaction:
+    """一笔资金流水（转账/回款/返利/工资提成等）."""
+
+    date: str = ""  # 交易日期
+    payer: str = ""  # 付款方
+    payee: str = ""  # 收款方
+    amount: str = ""  # 金额（保留原文表述，如 人民币45万元）
+    account: str = ""  # 收/付款账户信息（开户行+卡号等）
+    note: str = ""  # 备注（用途/对应合同等）
+    page: int = 0  # 所在卷宗页码（须落在所属书证页码区间内）
 
 
 @dataclass
 class DocumentaryEvidence:
     """书证（客观证据）."""
 
-    name: str = ""  # 文件名称
+    name: str = ""
     volume: str = ""
     page_start: int = 0
     page_end: int = 0
+    doc_no: str = ""  # 文书/合同编号（如有）
     time: str = ""  # 形成时间
     source: str = ""  # 来源/制作主体
+    fact_group: str = ""  # 待证事实分组（如“胡莉英投资222万事实”；空则归入“其他书证”）
     content_summary: str = ""
+    transactions: list[Transaction] = field(default_factory=list)  # 逐笔资金流水
     source_ref: Citation | None = None
+
+
+@dataclass
+class FundsSummary:
+    """资金勾稽摘要（辩护关键数字，由结论员综合计算）."""
+
+    reported_amount: str = ""  # 报案/投资人陈述金额合计
+    contract_amount: str = ""  # 合同/协议金额合计
+    charged_amount: str = ""  # 起诉书指控金额
+    returned_amount: str = ""  # 已返还/返利金额
+    illegal_income: str = ""  # 违法所得（工资/提成等）
+    restitution: str = ""  # 已退赔金额
+    note: str = ""  # 勾稽说明（口径、差异原因）
 
 
 @dataclass
@@ -178,6 +212,7 @@ class CaseWorkspace:
         self.documentary_evidence: list[DocumentaryEvidence] = []
         self.catalog: list[CatalogEntry] = []
         self.conclusions: Conclusions = Conclusions()
+        self.funds: FundsSummary = FundsSummary()
 
         # 页码合法性校验用：volume_name -> max_pages
         self._volume_pages: dict[str, int] = {}
@@ -194,6 +229,30 @@ class CaseWorkspace:
     def known_volumes(self) -> list[str]:
         with self._lock:
             return list(self._volume_pages.keys())
+
+    # ----- 资金流水挂载 -----
+    def attach_transaction(self, evidence_name: str, tx: Transaction) -> tuple[bool, str]:
+        """把一笔资金流水挂到指定书证下（按名称匹配，取最近一次登记的同名书证）.
+
+        同时校验 tx.page 落在该书证页码区间内（page=0 表示未标注，跳过校验）。
+        """
+        with self._lock:
+            name = (evidence_name or "").strip()
+            target: DocumentaryEvidence | None = None
+            for e in reversed(self.documentary_evidence):
+                if e.name == name:
+                    target = e
+                    break
+            if target is None:
+                return False, f"未找到书证《{name}》，请先 record_documentary_evidence 登记该书证"
+            if tx.page and target.page_start:
+                if not (target.page_start <= tx.page <= target.page_end):
+                    return False, (
+                        f"流水页码 P{tx.page} 超出书证《{name}》页码区间 "
+                        f"P{target.page_start}-{target.page_end}"
+                    )
+            target.transactions.append(tx)
+            return True, f"已挂载到书证《{name}》（现有 {len(target.transactions)} 笔流水）"
 
     # ----- 引用校验 -----
     def validate_citation(self, c: Citation | None) -> tuple[bool, str]:
@@ -234,6 +293,20 @@ class CaseWorkspace:
             ok, msg = self.validate_citation(c)
             if not ok:
                 problems.append({"record": label, "issue": msg})
+        problems.extend(self._validate_transactions())
+        return problems
+
+    def _validate_transactions(self) -> list[dict[str, Any]]:
+        """复核流水页码是否落在所属书证页码区间内（防幻觉兜底，attach 时已即时校验）."""
+        problems = []
+        with self._lock:
+            for e in self.documentary_evidence:
+                for i, tx in enumerate(e.transactions, 1):
+                    if tx.page and e.page_start and not (e.page_start <= tx.page <= e.page_end):
+                        problems.append({
+                            "record": f"书证:{e.name} 流水第{i}笔",
+                            "issue": f"页码 P{tx.page} 超出书证页码区间 P{e.page_start}-{e.page_end}",
+                        })
         return problems
 
     # ----- 序列化（供生成器与调试）-----
@@ -256,6 +329,7 @@ class CaseWorkspace:
                 "documentary_evidence": [asdict(e) for e in self.documentary_evidence],
                 "catalog": [asdict(e) for e in self.catalog],
                 "conclusions": asdict(self.conclusions),
+                "funds": asdict(self.funds),
             }
 
     def dump_json(self, path: Path | str) -> None:
@@ -278,4 +352,11 @@ def get_workspace() -> CaseWorkspace:
 def reset_workspace() -> CaseWorkspace:
     global _WORKSPACE
     _WORKSPACE = CaseWorkspace()
+    return _WORKSPACE
+
+
+def set_workspace(ws: CaseWorkspace) -> CaseWorkspace:
+    """把进程级工作区单例切换为指定实例（会话绑定时使用）."""
+    global _WORKSPACE
+    _WORKSPACE = ws
     return _WORKSPACE

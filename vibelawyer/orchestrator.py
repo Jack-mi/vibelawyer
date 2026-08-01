@@ -18,7 +18,8 @@ from claude_agent_sdk import (
 
 from .agents import SUBAGENTS
 from .config import CaseConfig
-from .tools import get_tools, init_tools
+from .sessions import MANAGER, CaseSession
+from .tools import bind_session, get_tools, init_tools
 from .workspace import get_workspace
 
 MCP_SERVER_NAME = "vibelawyer"
@@ -115,15 +116,29 @@ def _vision_note(vision_available: bool) -> str:
 
 
 async def run_case(cfg: CaseConfig, *, model: str | None = None, effort: str = "high",
-                   max_turns: int = 100, verbose: bool = True) -> dict:
+                   max_turns: int = 100, verbose: bool = True,
+                   session: CaseSession | None = None, progress=None) -> dict:
     """端到端运行阅卷流程（多 agent 顺序编排），返回结果摘要.
 
     编排策略：Python 主编排器按阅卷工作流顺序运行各专职子 agent（每个作为独立 top-level
     query() 会话，共享同一进程内 MCP 工具与 CaseWorkspace）。OCR 结果在进程内缓存，
     后续 agent 读取同页几乎零成本。各 agent 返回后由编排器用 get_workspace_summary
     核实实际登记数，不足则补跑。最后校验引用并导出 Word/Excel。
+
+    session 传入时复用该会话（MCP 服务模式：create_case 已建会话，不重置工作区），
+    否则经 init_tools 新建会话（本地 CLI 模式）。progress 为可选的步骤回调（签名 f(str)）。
     """
-    ws = init_tools(cfg, use_docling=True, verbose=verbose)  # 初始化工具层 + docling 预转换 + 重置工作区
+    def _emit(msg: str) -> None:
+        if progress is not None:
+            progress(msg)
+        if verbose:
+            print(msg, flush=True)
+
+    if session is not None:
+        MANAGER.ensure_docling_cache(session, verbose=verbose)
+        ws = bind_session(session).workspace
+    else:
+        ws = init_tools(cfg, use_docling=True, verbose=verbose)  # 初始化工具层 + docling 预转换 + 重置工作区
     server = create_sdk_mcp_server(MCP_SERVER_NAME, "1.0.0", tools=get_tools(cfg.vision_available))
     hint = (
         f"{'当事人：' + cfg.defendant_hint + '。' if cfg.defendant_hint else ''}"
@@ -141,24 +156,30 @@ async def run_case(cfg: CaseConfig, *, model: str | None = None, effort: str = "
          "（full_text_summary 原样复制涉及被告人的指控事实），add_charged_fact 逐笔登记指控事实。"),
         ("defendant-statement-extractor", "提取被告人供述与辩解。search_volumes 检索被告人姓名定位讯问笔录，"
          "对每份笔录 read_pages 后用 record_statement(role='defendant') 登记"
-         "（笔录时间/办案人员/办案地点/是否同步录音录像/对应指控事实/笔录内容）。多份笔录按时间逐一登记。"),
+         "（笔录时间/办案人员/办案地点/是否同步录音录像/对应指控事实/要点摘要/**full_text 逐字问答全文**）。"
+         "多份笔录按时间逐一登记，一份笔录一次调用。"),
         ("codefendant-statement-extractor", "提取同案人供述（如有）。从起诉书识别同案人并 search_volumes 定位其讯问笔录，"
-         "用 record_statement(role='codefendant') 登记。无同案人则返回说明。"),
+         "用 record_statement(role='codefendant') 登记（含 full_text 逐字问答全文）。无同案人则返回说明。"),
         ("witness-statement-extractor", "提取证人证言。search_volumes 检索“询问笔录/证人”定位，"
-         "用 record_statement(role='witness') 登记每份证言。行受贿类案件的行贿人/知情人证言须完整记录。"),
+         "用 record_statement(role='witness') 登记每份证言（含 full_text 逐字问答全文，"
+         "金额/账户/日期等细节原样保留）。行受贿类案件的行贿人/知情人证言须完整记录。"),
         ("procedural-extractor", "提取程序性文书。search_volumes 检索“立案/拘留/逮捕/取保/搜查/扣押/鉴定/移送/起诉/法律援助/出庭”等，"
-         "用 record_procedural_doc 逐份登记（文书类型/时间/地点/内容）。按时间顺序覆盖从被调查到当前的程序链条。"),
+         "用 record_procedural_doc 逐份登记（文书类型/**文号 doc_no**/时间/地点/内容）。"
+         "按时间顺序覆盖从被调查到当前的程序链条。"),
         ("evidence-extractor", "提取书证。用 get_volume_outline 浏览各卷识别客观证据（合同/银行流水/转账凭证/收据/"
          "公司登记资料/审计报告/鉴定意见/任职文件等），用 record_documentary_evidence 逐份登记"
-         "（文件名称/时间/卷宗页码/来源/主要内容）。"),
+         "（文件名称/时间/卷宗页码/来源/主要内容/**fact_group 待证事实分组**）；"
+         "流水类书证必须用 add_transaction 逐笔登记资金流水。"),
         ("conclusion-synthesizer", "形成阅卷结论。先 get_workspace_summary 查看整体登记，必要时 read_pages 复核关键页，"
-         "用 record_conclusions 登记核心事实/证据链条/证据矛盾点/待核查疑点。仅做案情梳理，不输出正式辩护策略。"),
+         "用 record_conclusions 登记核心事实/证据链条/证据矛盾点（重点比对各次供述全文的不一致）/待核查疑点；"
+         "用 record_funds_summary 登记资金勾稽摘要（报案合计/合同合计/指控金额/已返还/违法所得/已退赔，"
+         "口径不一致须在 note 说明）。仅做案情梳理，不输出正式辩护策略。"),
     ]
 
     sub_summary = []
     catalog_briefing = ""  # case-indexer 完成后填充，供后续 agent 共享卷宗定位信息
     for name, task in flow:
-        print(f"\n========== 委派子 agent: {name} ==========", flush=True)
+        _emit(f"\n========== 委派子 agent: {name} ==========")
         ad = SUBAGENTS[name]
         full_task = task + " " + hint
         if name != "case-indexer" and catalog_briefing:
@@ -169,13 +190,13 @@ async def run_case(cfg: CaseConfig, *, model: str | None = None, effort: str = "
         # 核实实际登记数
         ws_now = get_workspace()
         counts = _section_counts(ws_now)
-        print(f"[核实] {name} 后工作区: {counts}", flush=True)
+        _emit(f"[核实] {name} 后工作区: {counts}")
         # case-indexer 完成后，构建卷宗目录摘要供后续 agent 使用
         if name == "case-indexer" and not catalog_briefing:
             catalog_briefing = _build_catalog_briefing(ws_now)
 
     # 主 agent 收尾：校验 + 导出（直接调用，确保执行）。最终产出仅 Word/Excel，不再导出 JSON。
-    print("\n========== 校验引用 + 导出 ==========", flush=True)
+    _emit("\n========== 校验引用 + 导出 ==========")
     from .generators.docx_notes import generate_review_notes
     from .generators.xlsx_catalog import generate_catalog_xlsx
     out_dir = cfg.ensure_output_dir()
