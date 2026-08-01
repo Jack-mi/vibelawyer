@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Jack-mi/vibelawyer",
+  "title": "VibeLawyer",
+  "description": "Local MCP for Chinese criminal dossier review; Word notes + Excel catalogs stay on-device.",
+  "repository": {
+    "url": "https://github.com/Jack-mi/vibelawyer",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "vibelawyer",
+      "version": "0.1.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "vibelawyer-mcp"
+        }
+      ]
+    }
+  ]
+}

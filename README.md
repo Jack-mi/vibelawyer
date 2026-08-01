@@ -150,6 +150,8 @@ python scripts/diag.py
 
 ## MCP Server（本地接入 Agent）
 
+<!-- mcp-name: io.github.Jack-mi/vibelawyer -->
+
 `vibelawyer` 以 [FastMCP](https://github.com/jlowin/fastmcp) 提供 **本地 stdio MCP Server**：卷宗只在用户本机处理，由 Cursor / Claude Code / Claude Desktop / OpenCode 等 Agent 接入。
 
 工具面（均带 `case_id`）：
