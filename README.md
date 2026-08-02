@@ -75,9 +75,10 @@ pip install -e .
 ## 接入宿主 Agent（推荐）
 
 ```bash
-uvx --from vibelawyer vibelawyer-mcp
-# 已 pip install 时：
-vibelawyer-mcp
+uvx vibelawyer
+# 等价别名：
+# uvx --from vibelawyer vibelawyer-mcp
+# 已 pip install 时：vibelawyer 或 vibelawyer-mcp
 ```
 
 ### Cursor / 通用 `mcp.json`
@@ -87,7 +88,7 @@ vibelawyer-mcp
   "mcpServers": {
     "vibelawyer": {
       "command": "uvx",
-      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+      "args": ["vibelawyer"]
     }
   }
 }
@@ -100,7 +101,7 @@ vibelawyer-mcp
   "mcpServers": {
     "vibelawyer": {
       "command": "uvx",
-      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+      "args": ["vibelawyer"]
     }
   }
 }
@@ -108,7 +109,7 @@ vibelawyer-mcp
 
 ### Kimi Code / OpenCode / Codex
 
-在各自 MCP 配置中填入同一 `command` / `args`。已安装包时可将 `command` 改为 `vibelawyer-mcp`、`args` 留空。
+在各自 MCP 配置中填入同一 `command` / `args`。已安装包时可将 `command` 改为 `vibelawyer`（或别名 `vibelawyer-mcp`）、`args` 留空。本地 CLI 指引用 `vibelawyer-cli`。
 
 配置完成后，让 Agent 阅读并遵循：
 
@@ -152,7 +153,8 @@ python scripts/smoke_render.py
 ### HTTP（可选）
 
 ```bash
-VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 vibelawyer-mcp
+VIBELAWYER_MCP_TRANSPORT=http VIBELAWYER_MCP_PORT=8000 vibelawyer
+# 或别名：vibelawyer-mcp
 # 可选鉴权：VIBELAWYER_MCP_TOKEN=<secret>
 ```
 

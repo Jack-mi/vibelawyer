@@ -7,23 +7,17 @@
     "url": "https://github.com/Jack-mi/vibelawyer",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "vibelawyer",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
-      },
-      "packageArguments": [
-        {
-          "type": "positional",
-          "value": "vibelawyer-mcp"
-        }
-      ]
+      }
     }
   ]
 }

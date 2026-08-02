@@ -1,6 +1,6 @@
 [project]
 name = "vibelawyer"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local MCP server for Chinese criminal case dossier review — generates Word notes and Excel catalogs on your machine"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,7 +28,7 @@ dependencies = [
     "pypdfium2>=4",
     "python-docx>=1.1",
     "openpyxl>=3.1",
-    "Pillow>=10",
+    "Pillow>=12.3.0",
     "numpy>=1.26",
     "fastmcp>=3.4.4,<4",
 ]
@@ -42,8 +42,10 @@ Repository = "https://github.com/Jack-mi/vibelawyer"
 Issues = "https://github.com/Jack-mi/vibelawyer/issues"
 
 [project.scripts]
-vibelawyer = "vibelawyer.run:main"
+# Primary name must match PyPI identifier so `uvx vibelawyer` (registry/marketplace) starts MCP.
+vibelawyer = "vibelawyer.mcp_server:main"
 vibelawyer-mcp = "vibelawyer.mcp_server:main"
+vibelawyer-cli = "vibelawyer.run:main"
 
 [build-system]
 requires = ["hatchling"]

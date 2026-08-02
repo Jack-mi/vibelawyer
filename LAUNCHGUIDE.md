@@ -16,7 +16,7 @@
 | Long description | See README. FastMCP stdio server: create_case → start_review (playbook for host agent) → read/record tools → download docx/xlsx. No Claude Code CLI required. |
 | GitHub URL | `https://github.com/Jack-mi/vibelawyer` |
 | PyPI package | `vibelawyer` |
-| Install command | `uvx --from vibelawyer vibelawyer-mcp` |
+| Install command | `uvx vibelawyer` |
 | Transport | Local / stdio |
 | Pricing | **Free** |
 | Category | Legal / Productivity / Developer Tools（选平台最接近的） |
@@ -29,7 +29,7 @@
   "mcpServers": {
     "vibelawyer": {
       "command": "uvx",
-      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+      "args": ["vibelawyer"]
     }
   }
 }

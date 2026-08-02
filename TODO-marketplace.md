@@ -1,26 +1,30 @@
 # Marketplace 上架 TODO（本地跟踪）
 
-> 更新：2026-08-01。目标：PyPI 本地包 + mcp-marketplace.io **免费**上架 + 官方 Registry。
+> 更新：2026-08-02。目标：PyPI 本地包 + mcp-marketplace.io **免费**上架 + 官方 Registry。
 
 ## 已完成
 
 - [x] 确认主形态：本地 stdio MCP（PyPI），非 Docker / 非公网托管
-- [x] `pyproject.toml` 补齐元数据、`vibelawyer-mcp` 入口、MIT
+- [x] `pyproject.toml` 补齐元数据、MCP 主入口、MIT
 - [x] README：Cursor / Claude Code / Claude Desktop 接入示例
 - [x] `LAUNCHGUIDE.md` 提交表单建议值
 - [x] `uv build` 本地构建通过
 - [x] GitHub 仓库改为 **Public**
 - [x] 推送含打包改动的 `main`
-- [x] PyPI 发布 `vibelawyer==0.1.0` / `0.1.1`（含 `<!-- mcp-name: io.github.Jack-mi/vibelawyer -->`）
+- [x] PyPI 发布 `vibelawyer==0.1.0` / `0.1.1`
 - [x] 新增 `server.json`；`mcp-publisher validate` 通过
-- [x] 冒烟：`uvx --from vibelawyer vibelawyer-mcp` 可启动 FastMCP stdio
+- [x] `mcp-publisher login github` + `mcp-publisher publish` → 官方 Registry（`io.github.Jack-mi/vibelawyer` @ 0.1.1）
+- [x] marketplace listing 可见（v0.1.1）
 
-## 待办（需人工 GitHub 登录）
+## 0.1.2 修复（Pillow CVE + 入口对齐）
 
-- [ ] 在 [mcp-marketplace.io](https://mcp-marketplace.io) 用 GitHub 登录 Creator 账号
-- [ ] 打开 [/submit](https://mcp-marketplace.io/submit)，按 `LAUNCHGUIDE.md` 填表，定价选 **Free**
-- [x] `mcp-publisher login github` + `mcp-publisher publish` → [官方 Registry](https://registry.modelcontextprotocol.io)（`io.github.Jack-mi/vibelawyer` @ 0.1.1）
-- [ ] 等待安全扫描与审核通过；核对 listing 安装命令为 `uvx --from vibelawyer vibelawyer-mcp`
+- [x] `Pillow>=12.3.0`（清 marketplace 报告的 5 个 Pillow CVE）
+- [x] 主入口 `vibelawyer` → MCP（使 registry/marketplace 的 `uvx vibelawyer` 正确）
+- [x] 保留别名 `vibelawyer-mcp`；CLI 迁至 `vibelawyer-cli`
+- [x] `server.json` 去掉错误的 `packageArguments`，版本 0.1.2
+- [ ] 构建 + PyPI 发布 `0.1.2`
+- [ ] 官方 Registry 发布 `0.1.2`
+- [ ] marketplace 重扫 / 核对 Install 为 `uvx vibelawyer`
 
 ## 上架后可选
 
@@ -28,9 +32,14 @@
 - [ ] mcp.so / Glama / awesome-mcp-servers 发现渠道
 - [ ] 日后收费：接入 `mcp-marketplace-license`，改 listing 定价
 
-## 官方 Registry 一键命令（登录后）
+## 发布命令
 
 ```bash
+uv build
+uv publish   # 需 PyPI API Token
+
+# Official Registry
+curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.0/mcp-publisher_Darwin_arm64.tar.gz" | tar -xz -C /tmp mcp-publisher
 /tmp/mcp-publisher login github
-cd /path/to/vibelawyer && /tmp/mcp-publisher publish
+/tmp/mcp-publisher publish
 ```

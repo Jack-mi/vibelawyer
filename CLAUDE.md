@@ -15,7 +15,11 @@ python -m vibelawyer.run --print-playbook
 
 # 启动 MCP Server（stdio）
 python -m vibelawyer.mcp_server
-# 或: vibelawyer-mcp
+# 或: uvx vibelawyer / vibelawyer / vibelawyer-mcp
+
+# 本地 CLI 指引（非 MCP）
+vibelawyer-cli
+# 或: python -m vibelawyer.run
 
 # 诊断 / 渲染冒烟（不调用 LLM）
 python scripts/diag.py
@@ -26,7 +30,7 @@ python scripts/smoke_render.py
 
 ## 架构要点（改代码前必读）
 
-- **默认路径**：任意 Coding Agent 接 `vibelawyer-mcp`，按 [`playbook.py`](vibelawyer/playbook.py) / Skill 八步调用工具；也可同一 `case_id` 下零散按需调工具。`start_review` **只下发 playbook**，不启后台 LLM job。
+- **默认路径**：任意 Coding Agent 接 `uvx vibelawyer`（别名 `vibelawyer-mcp`），按 [`playbook.py`](vibelawyer/playbook.py) / Skill 八步调用工具；也可同一 `case_id` 下零散按需调工具。`start_review` **只下发 playbook**，不启后台 LLM job。
 - **原子工具** [`tools.py`](vibelawyer/tools.py)：本地 [`tool_spec.py`](vibelawyer/tool_spec.py) 的 `ToolSpec`；FastMCP 薄封装复用 `.handler`。
 - **每条记录强制带来源引用**；`validate_citations` 防幻觉页码。改输出看 `generators/`。
 - **卷宗解析**：docling → pypdfium2 → tesseract chi_sim。

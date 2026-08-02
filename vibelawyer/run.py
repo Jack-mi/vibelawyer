@@ -1,7 +1,10 @@
-"""命令行入口：vibelawyer / python -m vibelawyer.run
+"""命令行入口：vibelawyer-cli / python -m vibelawyer.run
 
 默认：打印 MCP + Skill 使用指引（不调用 Claude Code）。
 可选：--legacy 在已安装 vibelawyer[legacy-agent] 且本机有 Claude Code CLI 时跑旧全流程。
+
+注意：包主入口 `vibelawyer` / `vibelawyer-mcp` 启动 FastMCP（见 mcp_server.py），
+本模块仅通过 `vibelawyer-cli` 暴露。
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from .playbook import playbook_markdown
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="vibelawyer",
+        prog="vibelawyer-cli",
         description="刑事案件阅卷：默认走 MCP + 宿主 Agent Skill；可选 --legacy 用 Claude Code",
     )
     p.add_argument("--case-dir", default=str(DEFAULT_DATA_DIR), help="卷宗所在目录（默认 ./data）")

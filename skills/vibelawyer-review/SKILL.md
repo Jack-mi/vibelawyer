@@ -8,7 +8,7 @@ description: >
 
 # 刑事案件阅卷（宿主 Agent + vibelawyer MCP）
 
-卷宗 PDF 只在用户本机处理。你（宿主 Agent）负责推理与编排；`vibelawyer-mcp` 提供读卷、登记、校验、导出工具。
+卷宗 PDF 只在用户本机处理。你（宿主 Agent）负责推理与编排；`vibelawyer` MCP（入口 `uvx vibelawyer` / 别名 `vibelawyer-mcp`）提供读卷、登记、校验、导出工具。
 
 ## 前置：接入 MCP
 
@@ -21,13 +21,13 @@ description: >
   "mcpServers": {
     "vibelawyer": {
       "command": "uvx",
-      "args": ["--from", "vibelawyer", "vibelawyer-mcp"]
+      "args": ["vibelawyer"]
     }
   }
 }
 ```
 
-已 `pip install vibelawyer` 时可用 `"command": "vibelawyer-mcp"`、`args` 留空。
+已 `pip install vibelawyer` 时可用 `"command": "vibelawyer"`（或别名 `vibelawyer-mcp`）、`args` 留空。
 
 Kimi Code / OpenCode / Codex 等：在各自 MCP 配置里填入同一 command。
 
