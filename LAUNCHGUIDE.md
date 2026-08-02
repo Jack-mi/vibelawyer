@@ -4,6 +4,10 @@
 
 官方流程摘要：公开 GitHub → 发到 PyPI → [Submit](https://mcp-marketplace.io/submit) → 安全扫描 → 审核通过后可搜到。
 
+> **已上架后的版本 bump / CVE 修复 / 重扫**：不要只改 PyPI。按  
+> [`MARKETPLACE-UPDATE.md`](MARKETPLACE-UPDATE.md)  
+> 顺序做：PyPI → Official Registry → 手工 listing 编辑页 Request re-scan。
+
 ---
 
 ## 提交表单建议填写

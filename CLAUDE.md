@@ -35,6 +35,7 @@ python scripts/smoke_render.py
 - **每条记录强制带来源引用**；`validate_citations` 防幻觉页码。改输出看 `generators/`。
 - **卷宗解析**：docling → pypdfium2 → tesseract chi_sim。
 - **可选 legacy**：`pip install 'vibelawyer[legacy-agent]'` + `python -m vibelawyer.run --legacy`（需本机 Claude Code CLI）。
+- **发版 / marketplace 重扫**：按 [`MARKETPLACE-UPDATE.md`](MARKETPLACE-UPDATE.md)（PyPI → Official Registry → 手工 listing Request re-scan）。首次上架字段见 [`LAUNCHGUIDE.md`](LAUNCHGUIDE.md)。
 
 ## 数据约定
 

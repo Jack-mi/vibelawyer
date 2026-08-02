@@ -1,6 +1,7 @@
 # Marketplace 上架 TODO（本地跟踪）
 
-> 更新：2026-08-02。目标：PyPI 本地包 + mcp-marketplace.io **免费**上架 + 官方 Registry。
+> 更新：2026-08-02。目标：PyPI 本地包 + mcp-marketplace.io **免费**上架 + 官方 Registry。  
+> **以后每次发版 / 修 CVE / 重扫，按 [`MARKETPLACE-UPDATE.md`](MARKETPLACE-UPDATE.md) 执行。**
 
 ## 已完成
 
@@ -16,16 +17,17 @@
 - [x] `mcp-publisher login github` + `mcp-publisher publish` → 官方 Registry（`io.github.Jack-mi/vibelawyer` @ 0.1.1）
 - [x] marketplace listing 可见（v0.1.1）
 
-## 0.1.2 修复（Pillow CVE + 入口对齐）
+## 0.1.2 / 0.1.3 修复（Pillow CVE + 入口对齐）
 
 - [x] `Pillow>=12.3.0`（清 marketplace 报告的 5 个 Pillow CVE）
 - [x] 主入口 `vibelawyer` → MCP（使 registry/marketplace 的 `uvx vibelawyer` 正确）
 - [x] 保留别名 `vibelawyer-mcp`；CLI 迁至 `vibelawyer-cli`
-- [x] `server.json` 去掉错误的 `packageArguments`，版本 0.1.2
+- [x] `server.json` 去掉错误的 `packageArguments`
 - [x] 构建 + PyPI 发布 `0.1.2`（缺 mcp-name）/ **`0.1.3`**
 - [x] 官方 Registry 发布 `0.1.3`
 - [x] marketplace 已出现 `0.1.3` listing：`uvx vibelawyer==0.1.3`，securityScore **10**
 - [x] 手工 listing [`/server/vibelawyer`](https://mcp-marketplace.io/server/vibelawyer) 已更新到 **0.1.3** 并重扫通过（score **10.0**，无 ACTION REQUIRED）
+- [x] 流程沉淀为 [`MARKETPLACE-UPDATE.md`](MARKETPLACE-UPDATE.md)
 
 ## 上架后可选
 
@@ -33,14 +35,7 @@
 - [ ] mcp.so / Glama / awesome-mcp-servers 发现渠道
 - [ ] 日后收费：接入 `mcp-marketplace-license`，改 listing 定价
 
-## 发布命令
+## 快捷入口
 
-```bash
-uv build
-uv publish   # 需 PyPI API Token
-
-# Official Registry
-curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.0/mcp-publisher_Darwin_arm64.tar.gz" | tar -xz -C /tmp mcp-publisher
-/tmp/mcp-publisher login github
-/tmp/mcp-publisher publish
-```
+完整步骤与坑点 → **[`MARKETPLACE-UPDATE.md`](MARKETPLACE-UPDATE.md)**  
+首次提交表单 → [`LAUNCHGUIDE.md`](LAUNCHGUIDE.md)
