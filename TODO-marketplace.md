@@ -22,9 +22,9 @@
 - [x] 主入口 `vibelawyer` → MCP（使 registry/marketplace 的 `uvx vibelawyer` 正确）
 - [x] 保留别名 `vibelawyer-mcp`；CLI 迁至 `vibelawyer-cli`
 - [x] `server.json` 去掉错误的 `packageArguments`，版本 0.1.2
-- [ ] 构建 + PyPI 发布 `0.1.2`
-- [ ] 官方 Registry 发布 `0.1.2`
-- [ ] marketplace 重扫 / 核对 Install 为 `uvx vibelawyer`
+- [x] 构建 + PyPI 发布 `0.1.2`（缺 mcp-name）/ **`0.1.3`**
+- [x] 官方 Registry 发布 `0.1.3`
+- [ ] marketplace 重扫 / 核对 Install 为 `uvx vibelawyer`（等平台拉取 0.1.3）
 
 ## 上架后可选
 

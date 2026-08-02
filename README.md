@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.Jack-mi/vibelawyer -->
 # vibelawyer —— 通用化刑事案件阅卷 MCP
 
 本地 [FastMCP](https://github.com/PrefectHQ/fastmcp) 阅卷工具箱。给定卷宗 PDF 目录，由 **任意 Coding Agent**（Cursor / Kimi Code / OpenCode / Codex / Claude Desktop 等）调用工具，产出：
