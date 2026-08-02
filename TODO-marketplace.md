@@ -24,7 +24,8 @@
 - [x] `server.json` 去掉错误的 `packageArguments`，版本 0.1.2
 - [x] 构建 + PyPI 发布 `0.1.2`（缺 mcp-name）/ **`0.1.3`**
 - [x] 官方 Registry 发布 `0.1.3`
-- [x] marketplace 已出现 `0.1.3` listing：`uvx vibelawyer==0.1.3`，securityScore **10**（旧 0.1.1 / 手工 listing 可能仍短暂并存）
+- [x] marketplace 已出现 `0.1.3` listing：`uvx vibelawyer==0.1.3`，securityScore **10**
+- [x] 手工 listing [`/server/vibelawyer`](https://mcp-marketplace.io/server/vibelawyer) 已更新到 **0.1.3** 并重扫通过（score **10.0**，无 ACTION REQUIRED）
 
 ## 上架后可选
 
